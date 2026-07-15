@@ -1,0 +1,31 @@
+# Env
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+frontend/.next/
+
+# Data / models (populated in later steps)
+backend/app/ingestion/raw_cache/
+backend/app/models/checkpoints/
+*.pt
+*.ckpt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Docker volumes are managed by Docker itself, nothing to ignore here
