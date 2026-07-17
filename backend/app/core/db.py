@@ -35,6 +35,7 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     """Create all tables that don't exist yet. Called on app startup in dev;
     a real deploy would use Alembic migrations instead."""
+    from app.geospatial import models as geospatial_models  # noqa: F401
     from app.ingestion import models  # noqa: F401  (registers tables on Base)
 
     Base.metadata.create_all(bind=engine)

@@ -19,6 +19,12 @@ class CityBounds:
     bbox: tuple[float, float, float, float]  # (min_lon, min_lat, max_lon, max_lat)
     utm_epsg: int  # projected CRS for 1km grid math in Step 3
 
+    def buffered_bbox(self, degrees: float = 0.5) -> tuple[float, float, float, float]:
+        """Bbox expanded on every side — regional context (e.g. upwind fires
+        ~50km out at 0.5°) that city-limits queries would miss."""
+        min_lon, min_lat, max_lon, max_lat = self.bbox
+        return (min_lon - degrees, min_lat - degrees, max_lon + degrees, max_lat + degrees)
+
 
 CITIES: dict[str, CityBounds] = {
     "delhi-ncr": CityBounds(

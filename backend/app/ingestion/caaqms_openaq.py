@@ -66,19 +66,32 @@ def _fetch_locations(client: httpx.Client, bbox: tuple) -> list[dict]:
     return locations
 
 
-def _fetch_location_measurements(
-    client: httpx.Client, location_id: int, hours_back: int
-) -> list[dict]:
-    """Fetch recent hourly measurements for a location (all sensors at once)."""
-    now = datetime.now(timezone.utc)
-    data = _get(
-        client, f"/locations/{location_id}/measurements",
-        period_name="hour",
-        datetime_from=(now - timedelta(hours=hours_back)).isoformat(),
-        datetime_to=now.isoformat(),
-        limit=1000,
-    )
+def _fetch_location_latest(client: httpx.Client, location_id: int) -> list[dict]:
+    """Latest value per sensor for a location (OpenAQ v3 /locations/{id}/latest)."""
+    data = _get(client, f"/locations/{location_id}/latest", limit=1000)
     return data.get("results", [])
+
+
+def _fetch_sensor_hours(
+    client: httpx.Client, sensor_id: int, hours_back: int
+) -> list[dict]:
+    """Hourly history for one sensor (OpenAQ v3 /sensors/{id}/hours), paginated."""
+    now = datetime.now(timezone.utc)
+    results: list[dict] = []
+    page = 1
+    while True:
+        data = _get(
+            client, f"/sensors/{sensor_id}/hours",
+            datetime_from=(now - timedelta(hours=hours_back)).isoformat(),
+            datetime_to=now.isoformat(),
+            limit=1000, page=page,
+        )
+        batch = data.get("results", [])
+        results.extend(batch)
+        if len(batch) < 1000:
+            return results
+        page += 1
+        time.sleep(0.3)
 
 
 def pull_caaqms_readings(
@@ -120,25 +133,45 @@ def pull_caaqms_readings(
                 continue
 
             logger.info("CAAQMS: fetching location %d/%d — %s", i + 1, len(locations), loc["name"])
-            try:
-                measurements = _fetch_location_measurements(client, loc["id"], hours_back)
-            except httpx.HTTPError as exc:
-                logger.warning("CAAQMS: skipping location %d: %s", loc["id"], exc)
-                time.sleep(1.0)
-                continue
-
-            # Group measurements by sensor_id
             by_sensor: dict[int, list[Reading]] = {}
-            for m in measurements:
-                sid = m.get("sensorsId")
-                if sid not in loc_sensors or m.get("value") is None:
+            if hours_back <= 2:
+                # Hourly cadence: one /latest call per location covers every sensor.
+                try:
+                    latest = _fetch_location_latest(client, loc["id"])
+                except httpx.HTTPError as exc:
+                    logger.warning("CAAQMS: skipping location %d: %s", loc["id"], exc)
+                    time.sleep(1.0)
                     continue
-                ts = m.get("period", {}).get("datetimeFrom", {}).get("utc")
-                if not ts:
-                    continue
-                by_sensor.setdefault(sid, []).append(
-                    Reading(measured_at=_parse_iso(ts), value=m["value"])
-                )
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back + 1)
+                for m in latest:
+                    sid = m.get("sensorsId")
+                    if sid not in loc_sensors or m.get("value") is None:
+                        continue
+                    ts = m.get("datetime", {}).get("utc")
+                    if not ts or _parse_iso(ts) < cutoff:
+                        continue
+                    by_sensor.setdefault(sid, []).append(
+                        Reading(measured_at=_parse_iso(ts), value=m["value"])
+                    )
+            else:
+                # Backfill: hourly series per sensor.
+                for sid in loc_sensors:
+                    try:
+                        hours = _fetch_sensor_hours(client, sid, hours_back)
+                    except httpx.HTTPError as exc:
+                        logger.warning("CAAQMS: skipping sensor %d: %s", sid, exc)
+                        time.sleep(1.0)
+                        continue
+                    for m in hours:
+                        if m.get("value") is None:
+                            continue
+                        ts = m.get("period", {}).get("datetimeFrom", {}).get("utc")
+                        if not ts:
+                            continue
+                        by_sensor.setdefault(sid, []).append(
+                            Reading(measured_at=_parse_iso(ts), value=m["value"])
+                        )
+                    time.sleep(0.3)
 
             for sid, readings in by_sensor.items():
                 readings.sort(key=lambda r: r.measured_at)

@@ -8,7 +8,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-urbanair}
       POSTGRES_DB: ${POSTGRES_DB:-urbanair}
     ports:
-      - "5432:5432"
+      # Host port 5433: a native PostgreSQL on this machine owns 5432 and
+      # silently shadows the container for localhost connections.
+      - "5433:5432"
     volumes:
       - urbanair_pg_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro

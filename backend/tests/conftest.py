@@ -21,14 +21,22 @@ def test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    # IngestionRunLog and the raw ingestion tables all use portable column
-    # types (String/Float/Integer/DateTime), so SQLite create_all works fine
-    # for exercising route + run-log logic without a live Postgres/PostGIS.
-    from app.ingestion import models  # noqa: F401
+    # Only the raw ingestion tables use portable column types SQLite can
+    # create; the Step 3 grid tables carry a PostGIS Geometry column, so
+    # they're excluded here — grid logic is tested at the pure-function level.
+    from app.ingestion import models
 
-    Base.metadata.create_all(bind=engine)
+    ingestion_tables = [
+        models.CAAQMSReading.__table__,
+        models.FireDetection.__table__,
+        models.OSMLandUseFeature.__table__,
+        models.Sentinel5PProduct.__table__,
+        models.MeteoReading.__table__,
+        models.IngestionRunLog.__table__,
+    ]
+    Base.metadata.create_all(bind=engine, tables=ingestion_tables)
     yield engine
-    Base.metadata.drop_all(bind=engine)
+    Base.metadata.drop_all(bind=engine, tables=ingestion_tables)
 
 
 @pytest.fixture()

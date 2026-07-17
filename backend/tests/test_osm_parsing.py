@@ -1,13 +1,23 @@
-from app.ingestion.osm_landuse import _build_query, _extract_records, _matched_tag
+from app.ingestion.osm_landuse import _build_query, _extract_records, _matched_tag, _tiles
 
 
 def test_build_query_uses_south_west_north_east_order():
     bbox = (76.84, 28.40, 77.35, 28.88)  # (min_lon, min_lat, max_lon, max_lat)
-    query = _build_query(bbox)
+    query = _build_query(bbox, "landuse", ["industrial", "residential"])
     # Overpass expects (south,west,north,east) i.e. (min_lat,min_lon,max_lat,max_lon)
     assert "28.4,76.84,28.88,77.35" in query
     assert "landuse" in query
-    assert "highway" in query
+    assert "industrial|residential" in query
+
+
+def test_tiles_cover_bbox_without_gaps():
+    bbox = (76.84, 28.40, 77.35, 28.88)
+    tiles = _tiles(bbox, n=4)
+    assert len(tiles) == 16
+    assert min(t[0] for t in tiles) == bbox[0]
+    assert max(t[2] for t in tiles) == bbox[2]
+    assert min(t[1] for t in tiles) == bbox[1]
+    assert max(t[3] for t in tiles) == bbox[3]
 
 
 def test_matched_tag_landuse():

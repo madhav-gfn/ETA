@@ -10,7 +10,7 @@ import app.api.routes.ingestion as ingestion_routes
 
 
 def test_trigger_caaqms_run(client, monkeypatch):
-    monkeypatch.setattr(ingestion_routes, "pull_caaqms_readings", lambda db, city_slug: 42)
+    monkeypatch.setattr(ingestion_routes, "pull_caaqms_readings", lambda db, city_slug, **kw: 42)
 
     resp = client.post("/ingestion/caaqms/run", params={"city_slug": "delhi-ncr"})
 
@@ -38,7 +38,7 @@ def test_trigger_firms_run(client, monkeypatch):
 
 
 def test_trigger_run_reports_failure_status(client, monkeypatch):
-    def raising_pull(db, city_slug):
+    def raising_pull(db, city_slug, **kw):
         raise RuntimeError("upstream unavailable")
 
     monkeypatch.setattr(ingestion_routes, "pull_caaqms_readings", raising_pull)
@@ -58,7 +58,7 @@ def test_ingestion_status_empty_initially(client):
 
 
 def test_ingestion_status_reflects_previous_runs(client, monkeypatch):
-    monkeypatch.setattr(ingestion_routes, "pull_caaqms_readings", lambda db, city_slug: 5)
+    monkeypatch.setattr(ingestion_routes, "pull_caaqms_readings", lambda db, city_slug, **kw: 5)
     client.post("/ingestion/caaqms/run")
 
     resp = client.get("/ingestion/status")

@@ -18,7 +18,14 @@ from app.ingestion.models import OSMLandUseFeature
 
 logger = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Ordered failover list — overpass-api.de intermittently 406s entire networks,
+# so a working mirror must not depend on one host.
+OVERPASS_URLS = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+]
 
 # Tag filters straight from Section 1.4: "landuse=industrial, landuse=residential,
 # and highway=primary or highway=trunk are extracted to map road networks and
@@ -27,20 +34,33 @@ LANDUSE_VALUES = ["industrial", "residential"]
 HIGHWAY_VALUES = ["primary", "trunk"]
 
 
-def _build_query(bbox: tuple[float, float, float, float]) -> str:
+def _build_query(
+    bbox: tuple[float, float, float, float], tag_key: str, values: list[str]
+) -> str:
     min_lon, min_lat, max_lon, max_lat = bbox
     # Overpass bbox order is (south, west, north, east) — opposite of ours.
     overpass_bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
-    landuse_filter = "|".join(LANDUSE_VALUES)
-    highway_filter = "|".join(HIGHWAY_VALUES)
+    value_filter = "|".join(values)
     return f"""
-[out:json][timeout:180];
-(
-  way["landuse"~"^({landuse_filter})$"]({overpass_bbox});
-  way["highway"~"^({highway_filter})$"]({overpass_bbox});
-);
+[out:json][timeout:120];
+way["{tag_key}"~"^({value_filter})$"]({overpass_bbox});
 out center;
 """.strip()
+
+
+def _tiles(
+    bbox: tuple[float, float, float, float], n: int = 4
+) -> list[tuple[float, float, float, float]]:
+    """Split a bbox into n×n tiles — full-NCR (and even quadrant) Overpass
+    queries 504 at the gateway; 1/16-size tiles complete reliably."""
+    min_lon, min_lat, max_lon, max_lat = bbox
+    lon_step = (max_lon - min_lon) / n
+    lat_step = (max_lat - min_lat) / n
+    return [
+        (min_lon + i * lon_step, min_lat + j * lat_step,
+         min_lon + (i + 1) * lon_step, min_lat + (j + 1) * lat_step)
+        for i in range(n) for j in range(n)
+    ]
 
 
 def _extract_records(elements: list[dict]) -> list[dict]:
@@ -86,20 +106,35 @@ async def pull_osm_land_use(db: Session, city_slug: str = "delhi-ncr") -> int:
     land-use/road elements. Safe to re-run — static data, idempotent upsert.
     """
     city: CityBounds = get_city(city_slug)
-    query = _build_query(city.bbox)
 
+    tag_queries = [("landuse", LANDUSE_VALUES), ("highway", HIGHWAY_VALUES)]
+    total = 0
     async with httpx.AsyncClient() as client:
-        resp = await client.post(OVERPASS_URL, data={"data": query}, timeout=200.0)
-        resp.raise_for_status()
-        payload = resp.json()
+        for tile in _tiles(city.bbox):
+            for tag_key, values in tag_queries:
+                query = _build_query(tile, tag_key, values)
+                payload = await _post_overpass(client, query)
+                records = _extract_records(payload.get("elements", []))
+                for record in records:
+                    _upsert_feature(db, city_slug=city.slug, record=record)
+                total += len(records)
+                db.commit()  # commit per chunk so a late failure keeps earlier tiles
 
-    records = _extract_records(payload.get("elements", []))
-    for record in records:
-        _upsert_feature(db, city_slug=city.slug, record=record)
+    logger.info("OSM ingestion for %s wrote %d rows", city_slug, total)
+    return total
 
-    db.commit()
-    logger.info("OSM ingestion for %s wrote %d rows", city_slug, len(records))
-    return len(records)
+
+async def _post_overpass(client: httpx.AsyncClient, query: str) -> dict:
+    last_exc: Exception | None = None
+    for url in OVERPASS_URLS:
+        try:
+            resp = await client.post(url, data={"data": query}, timeout=200.0)
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Overpass endpoint %s failed: %s", url, exc)
+            last_exc = exc
+    raise RuntimeError("All Overpass endpoints failed") from last_exc
 
 
 def _upsert_feature(db: Session, *, city_slug: str, record: dict) -> None:

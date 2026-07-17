@@ -75,8 +75,41 @@ async def run_osm_job(city_slug: str = DEFAULT_CITY) -> None:
         db.close()
 
 
+async def run_meteo_job(city_slug: str = DEFAULT_CITY) -> None:
+    from app.ingestion.meteo_openmeteo import pull_meteo
+
+    db = SessionLocal()
+    try:
+        with track_run(db, "meteo", city_slug) as run:
+            run.records_ingested = await pull_meteo(db, city_slug)
+    except Exception:
+        logger.exception("Open-Meteo ingestion job failed")
+    finally:
+        db.close()
+
+
+async def run_grid_materialize_job(city_slug: str = DEFAULT_CITY) -> None:
+    """Step 3: hourly IDW projection of the freshest sensor data onto the
+    grid. Runs a few minutes after the CAAQMS pull so it sees the new hour."""
+    from app.geospatial.materialize import materialize_grid_readings
+
+    db = SessionLocal()
+    try:
+        await asyncio.to_thread(materialize_grid_readings, db, city_slug)
+    except Exception:
+        logger.exception("Grid materialization job failed")
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     scheduler.add_job(run_caaqms_job, IntervalTrigger(hours=1), id="caaqms_hourly", replace_existing=True)
+    scheduler.add_job(
+        run_grid_materialize_job,
+        CronTrigger(minute=15),  # hourly at :15, after the CAAQMS pull lands
+        id="grid_materialize_hourly", replace_existing=True,
+    )
+    scheduler.add_job(run_meteo_job, IntervalTrigger(hours=1), id="meteo_hourly", replace_existing=True)
     scheduler.add_job(run_firms_job, IntervalTrigger(hours=3), id="firms_3hourly", replace_existing=True)
     scheduler.add_job(run_sentinel5p_job, IntervalTrigger(hours=24), id="sentinel5p_daily", replace_existing=True)
     scheduler.add_job(run_osm_job, CronTrigger(day=1, hour=3), id="osm_monthly", replace_existing=True)

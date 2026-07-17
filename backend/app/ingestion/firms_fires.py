@@ -76,7 +76,9 @@ async def pull_fire_detections(
     total_written = 0
     async with httpx.AsyncClient() as client:
         for source in sources:
-            rows = await _fetch_source(client, settings.nasa_firms_map_key, source, city.bbox, day_range)
+            # Buffered bbox: the attribution agent looks for fires up to ~50km
+            # upwind of the city, so ingest the surrounding region too.
+            rows = await _fetch_source(client, settings.nasa_firms_map_key, source, city.buffered_bbox(0.5), day_range)
             for row in rows:
                 _upsert_detection(db, city_slug=city.slug, source=source, row=row)
                 total_written += 1

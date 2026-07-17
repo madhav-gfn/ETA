@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, ingestion
+from app.api.routes import grid, health, ingestion
 from app.core.config import get_settings
 from app.core.db import init_db
 from app.ingestion.scheduler import start_scheduler, stop_scheduler
@@ -53,6 +53,7 @@ app.add_middleware(
 
 app.include_router(health.router, tags=["health"])
 app.include_router(ingestion.router)
+app.include_router(grid.router)
 
 
 @app.get("/")

@@ -120,6 +120,27 @@ class Sentinel5PProduct(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class MeteoReading(Base):
+    """Hourly meteorology per city (Open-Meteo) — one point per city center;
+    meteorology varies smoothly at city scale so all grid cells share it."""
+
+    __tablename__ = "meteo_readings"
+    __table_args__ = (
+        UniqueConstraint("city_slug", "measured_at", name="uq_meteo_city_time"),
+        Index("ix_meteo_city_time", "city_slug", "measured_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    city_slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    temperature_c: Mapped[float] = mapped_column(Float, nullable=True)
+    relative_humidity: Mapped[float] = mapped_column(Float, nullable=True)
+    wind_speed_kmh: Mapped[float] = mapped_column(Float, nullable=True)
+    wind_direction_deg: Mapped[float] = mapped_column(Float, nullable=True)  # direction wind blows FROM
+    is_forecast: Mapped[bool] = mapped_column(default=False)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class IngestionRunLog(Base):
     """One row per puller invocation — backs the `/ingestion/status` route."""
 
