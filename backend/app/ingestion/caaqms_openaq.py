@@ -1,21 +1,18 @@
 """
-CAAQMS ground-sensor ingestion via the OpenAQ v3 API (Section 1.1).
+CAAQMS ground-sensor ingestion via the OpenAQ v3 REST API (Section 1.1).
 
-The native CPCB portals are unreliable for high-frequency extraction, so the
-official `openaq` Python SDK is used as a proxy — this matches the research
-report's recommendation and its noted need for pagination-safe polling.
+Strategy: fetch all locations in the city bbox in one paginated call, then
+fetch measurements per location (not per sensor) — far fewer requests.
+Uses httpx with explicit timeouts to avoid DNS/connect hangs.
 
-Requires OPENAQ_API_KEY (v3 of the OpenAQ API requires a key; there is no
-anonymous tier). Polling cadence: hourly, per Section 1.1's "Polling Logic".
-
-WATCHED PARAMETERS: pm25, pm10, no2, so2, co, o3 — the exact set called out
-in Section 1.1's "Schema & Parameters".
+WATCHED PARAMETERS: pm25, pm10, no2, so2, co, o3
 """
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
-from openaq import OpenAQ
+import httpx
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -28,74 +25,131 @@ from app.ingestion.models import CAAQMSReading
 logger = logging.getLogger(__name__)
 
 WATCHED_PARAMETERS = {"pm25", "pm10", "no2", "so2", "co", "o3"}
-
-
-def _fetch_sensor_history(
-    client: OpenAQ, sensor_id: int, hours_back: int
-) -> list[Reading]:
-    """Pull hourly-rollup measurements for one sensor over the lookback window."""
-    now = datetime.now(timezone.utc)
-    resp = client.measurements.list(
-        sensors_id=sensor_id,
-        data="hours",
-        datetime_from=now - timedelta(hours=hours_back),
-        datetime_to=now,
-        limit=1000,
-    )
-    readings = [
-        Reading(measured_at=_parse_iso(m.period.datetime_from.utc), value=m.value)
-        for m in resp.results
-    ]
-    readings.sort(key=lambda r: r.measured_at)
-    return readings
+BASE_URL = "https://api.openaq.org/v3"
+TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)
+PAGE_LIMIT = 100
 
 
 def _parse_iso(value: str) -> datetime:
-    # OpenAQ returns e.g. "2026-07-15T09:00:00+00:00" or with a trailing "Z"
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def pull_caaqms_readings(
-    db: Session, city_slug: str = "delhi-ncr", hours_back: int = 6
-) -> int:
-    """Discover CAAQMS stations in the city bbox, pull recent hourly readings
-    for the watched parameters, gap-fill sub-3-hour dropouts, and upsert.
+def _get(client: httpx.Client, path: str, **params) -> dict:
+    for attempt in range(3):
+        resp = client.get(f"{BASE_URL}{path}", params=params)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("retry-after", 60))
+            logger.warning("Rate limited, waiting %ds", retry_after)
+            time.sleep(retry_after)
+            continue
+        resp.raise_for_status()
+        return resp.json()
+    resp.raise_for_status()
+    return {}
 
-    Returns the number of rows written (including gap-filled rows).
-    """
+
+def _fetch_locations(client: httpx.Client, bbox: tuple) -> list[dict]:
+    """Fetch all locations in bbox, paginating through results."""
+    min_lon, min_lat, max_lon, max_lat = bbox
+    locations = []
+    page = 1
+    while True:
+        data = _get(client, "/locations", iso="IN",
+                    bbox=f"{min_lon},{min_lat},{max_lon},{max_lat}",
+                    limit=PAGE_LIMIT, page=page)
+        results = data.get("results", [])
+        locations.extend(results)
+        if len(results) < PAGE_LIMIT:
+            break
+        page += 1
+        time.sleep(0.5)
+    return locations
+
+
+def _fetch_location_measurements(
+    client: httpx.Client, location_id: int, hours_back: int
+) -> list[dict]:
+    """Fetch recent hourly measurements for a location (all sensors at once)."""
+    now = datetime.now(timezone.utc)
+    data = _get(
+        client, f"/locations/{location_id}/measurements",
+        period_name="hour",
+        datetime_from=(now - timedelta(hours=hours_back)).isoformat(),
+        datetime_to=now.isoformat(),
+        limit=1000,
+    )
+    return data.get("results", [])
+
+
+def pull_caaqms_readings(
+    db: Session, city_slug: str = "delhi-ncr", hours_back: int = 1
+) -> int:
     settings = get_settings()
     city: CityBounds = get_city(city_slug)
-
-    client = OpenAQ(api_key=settings.openaq_api_key)
+    headers = {"X-API-Key": settings.openaq_api_key}
     total_written = 0
 
-    try:
-        locations_resp = client.locations.list(iso="IN", bbox=city.bbox, limit=1000)
+    with httpx.Client(headers=headers, timeout=TIMEOUT) as client:
+        locations = _fetch_locations(client, city.bbox)
+        logger.info("CAAQMS: found %d locations for %s", len(locations), city_slug)
 
-        for location in locations_resp.results:
-            for sensor in location.sensors:
-                if sensor.parameter.name not in WATCHED_PARAMETERS:
+        # Build sensor_id -> location metadata map for upserts
+        sensor_meta: dict[int, dict] = {}
+        for loc in locations:
+            for sensor in loc.get("sensors", []):
+                param = sensor.get("parameter", {}).get("name", "")
+                if param in WATCHED_PARAMETERS:
+                    sensor_meta[sensor["id"]] = {
+                        "location_id": loc["id"],
+                        "station_name": loc["name"],
+                        "latitude": loc["coordinates"]["latitude"],
+                        "longitude": loc["coordinates"]["longitude"],
+                        "parameter": param,
+                        "unit": sensor["parameter"].get("units", ""),
+                    }
+
+        logger.info("CAAQMS: %d watched sensors across %d locations", len(sensor_meta), len(locations))
+
+        # One request per location instead of one per sensor
+        for i, loc in enumerate(locations):
+            loc_sensors = {
+                s["id"]: s for s in loc.get("sensors", [])
+                if s.get("parameter", {}).get("name", "") in WATCHED_PARAMETERS
+            }
+            if not loc_sensors:
+                continue
+
+            logger.info("CAAQMS: fetching location %d/%d — %s", i + 1, len(locations), loc["name"])
+            try:
+                measurements = _fetch_location_measurements(client, loc["id"], hours_back)
+            except httpx.HTTPError as exc:
+                logger.warning("CAAQMS: skipping location %d: %s", loc["id"], exc)
+                time.sleep(1.0)
+                continue
+
+            # Group measurements by sensor_id
+            by_sensor: dict[int, list[Reading]] = {}
+            for m in measurements:
+                sid = m.get("sensorsId")
+                if sid not in loc_sensors or m.get("value") is None:
                     continue
+                ts = m.get("period", {}).get("datetimeFrom", {}).get("utc")
+                if not ts:
+                    continue
+                by_sensor.setdefault(sid, []).append(
+                    Reading(measured_at=_parse_iso(ts), value=m["value"])
+                )
 
-                raw_readings = _fetch_sensor_history(client, sensor.id, hours_back)
-                filled_readings = gap_fill_under_3h(raw_readings)
-
-                for reading in filled_readings:
-                    _upsert_reading(
-                        db,
-                        city_slug=city.slug,
-                        location_id=location.id,
-                        sensor_id=sensor.id,
-                        station_name=location.name,
-                        latitude=location.coordinates.latitude,
-                        longitude=location.coordinates.longitude,
-                        parameter=sensor.parameter.name,
-                        unit=sensor.parameter.units,
-                        reading=reading,
-                    )
+            for sid, readings in by_sensor.items():
+                readings.sort(key=lambda r: r.measured_at)
+                filled = gap_fill_under_3h(readings)
+                meta = sensor_meta[sid]
+                for reading in filled:
+                    _upsert_reading(db, city_slug=city.slug, sensor_id=sid,
+                                    reading=reading, **meta)
                     total_written += 1
-    finally:
-        client.close()
+
+            time.sleep(0.5)  # stay under rate limit between location requests
 
     db.commit()
     logger.info("CAAQMS ingestion for %s wrote %d rows", city_slug, total_written)
