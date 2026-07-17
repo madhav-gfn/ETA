@@ -1,44 +1,136 @@
-import BackendStatus from "@/components/BackendStatus";
+"use client";
 
-const steps = [
-  { n: 1, label: "Project setup & architecture foundation", done: true },
-  { n: 2, label: "Data ingestion layer (CAAQMS, FIRMS, OSM, Sentinel-5P)", done: true },
-  { n: 3, label: "Geospatial grid engine (1km grid + IDW)", done: false },
-  { n: 4, label: "Feature engineering & multi-modal fusion", done: false },
-  { n: 5, label: "Hyperlocal predictive forecasting model", done: false },
-  { n: 6, label: "Multi-agent intelligence layer", done: false },
-  { n: 7, label: "City & citizen dashboard", done: false },
-  { n: 8, label: "Integration, deployment & demo packaging", done: false },
-];
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useState } from "react";
+import AdvisoryCard from "@/components/AdvisoryCard";
+import EnforcementPanel from "@/components/EnforcementPanel";
+import {
+  getForecast,
+  getForecastMetrics,
+  getGridCells,
+  getGridReadings,
+  getRecommendations,
+  runAgentDrill,
+  type AgentRun,
+  type ForecastMetrics,
+  type ForecastResponse,
+  type GridCellInfo,
+  type GridReadingsResponse,
+} from "@/lib/api";
 
-export default function Home() {
+const AqiMap = dynamic(() => import("@/components/AqiMap"), { ssr: false });
+
+const HORIZON_STEPS = [
+  { label: "Live", step: null },
+  { label: "+1h", step: 1 },
+  { label: "+6h", step: 6 },
+  { label: "+12h", step: 12 },
+  { label: "+24h", step: 24 },
+  { label: "+48h", step: 48 },
+  { label: "+72h", step: 72 },
+] as const;
+
+export default function Dashboard() {
+  const [cells, setCells] = useState<GridCellInfo[]>([]);
+  const [readings, setReadings] = useState<GridReadingsResponse | null>(null);
+  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
+  const [metrics, setMetrics] = useState<ForecastMetrics | null>(null);
+  const [forecastStep, setForecastStep] = useState<number | null>(null);
+  const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
+  const [drillRunning, setDrillRunning] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    getGridCells().then((d) => setCells(d.cells)).catch(() => {});
+    getGridReadings().then(setReadings).catch(() => {});
+    getForecast("delhi-ncr", 72).then(setForecast).catch(() => setForecast(null));
+    getForecastMetrics().then(setMetrics).catch(() => setMetrics(null));
+    getRecommendations()
+      .then((d) => d.runs.length > 0 && setAgentRun(d.runs[0]))
+      .catch(() => {});
+  }, []);
+
+  const onDrill = useCallback(() => {
+    setDrillRunning(true);
+    // Central-Delhi cell for a realistic drill site.
+    const central = cells.find((c) => c.row_idx === 27 && c.col_idx === 23);
+    runAgentDrill("delhi-ncr", central?.grid_id)
+      .then((d) => {
+        if (d.anomaly_found) setAgentRun(d);
+      })
+      .finally(() => setDrillRunning(false));
+  }, [cells]);
+
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-16">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">UrbanAir Intel</h1>
-        <p className="mt-2 text-slate-400">
-          AI-powered Urban Air Quality Intelligence platform — dashboard placeholder.
-          Replaced with the live map/forecast/agent UI in Step 7.
-        </p>
+    <main className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            UrbanAir Intel <span className="text-sky-400">· Delhi NCR</span>
+          </h1>
+          <p className="mt-1 text-sm text-slate-400">
+            1km digital twin — live AQI, 72h hyperlocal forecast, source attribution &amp;
+            enforcement dispatch.
+          </p>
+        </div>
+        {metrics?.model_available && (
+          <div className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+            ConvLSTM RMSE {metrics.model_rmse_1h} vs persistence {metrics.persistence_rmse_1h}{" "}
+            {metrics.beats_persistence ? (
+              <span className="text-emerald-400">✓ beats baseline</span>
+            ) : (
+              <span className="text-amber-400">(baseline ahead)</span>
+            )}
+          </div>
+        )}
+      </header>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {HORIZON_STEPS.map(({ label, step }) => {
+          const disabled = step !== null && (!forecast || !forecast.horizons[String(step)]);
+          return (
+            <button
+              key={label}
+              disabled={disabled}
+              onClick={() => setForecastStep(step)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                forecastStep === step
+                  ? "bg-sky-600 text-white"
+                  : disabled
+                    ? "cursor-not-allowed bg-slate-900 text-slate-600"
+                    : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+        {readings?.measured_at && (
+          <span className="ml-2 text-xs text-slate-500">
+            live snapshot: {new Date(readings.measured_at).toLocaleString()}
+          </span>
+        )}
+        {selected && <span className="ml-auto text-xs text-sky-300">{selected}</span>}
       </div>
 
-      <BackendStatus />
-
-      <ol className="flex flex-col gap-2">
-        {steps.map((step) => (
-          <li
-            key={step.n}
-            className={`flex items-center gap-3 rounded-md border px-4 py-2 text-sm ${
-              step.done
-                ? "border-emerald-800 bg-emerald-950/40 text-emerald-300"
-                : "border-slate-800 bg-slate-900/40 text-slate-400"
-            }`}
-          >
-            <span className="font-mono text-xs">{step.done ? "✓" : step.n}</span>
-            <span>{step.label}</span>
-          </li>
-        ))}
-      </ol>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="h-[540px] lg:col-span-2">
+          <AqiMap
+            cells={cells}
+            readings={readings}
+            forecast={forecast}
+            forecastStep={forecastStep}
+            agentRun={agentRun}
+            onCellClick={(cell, v) =>
+              setSelected(`cell ${cell.grid_id} · PM2.5 ${v?.toFixed(0) ?? "—"} µg/m³`)
+            }
+          />
+        </div>
+        <div className="flex flex-col gap-4">
+          <AdvisoryCard />
+          <EnforcementPanel run={agentRun} onDrill={onDrill} drillRunning={drillRunning} />
+        </div>
+      </div>
     </main>
   );
 }
