@@ -11,23 +11,22 @@ Intervention"** hackathon problem statement. Full build plan:
 
 ## Status
 
-✅ **Step 1 of 8** — project scaffold, Docker infra, backend/frontend skeletons.
-✅ **Step 2 of 8** — data ingestion layer: CAAQMS/OpenAQ, NASA FIRMS, OSM
-Overpass, and Sentinel-5P pullers, each on their own schedule, with manual
-trigger routes and a run-log. See the build plan for what's next.
-
-### Trying Step 2
+**Steps 1–7 built and live-verified**; Step 8 (deployment + demo packaging) in
+progress. Pipeline demo path:
 
 ```bash
-# fill in real API keys in .env first: OPENAQ_API_KEY, NASA_FIRMS_MAP_KEY,
-# COPERNICUS_CDSE_USERNAME/PASSWORD (OSM Overpass needs no key)
-curl -X POST "http://localhost:8000/ingestion/caaqms/run?city_slug=delhi-ncr"
-curl "http://localhost:8000/ingestion/status"
-curl "http://localhost:8000/ingestion/caaqms/latest"
+curl -X POST "http://localhost:8000/ingestion/caaqms/run"     # live sensor pull
+curl -X POST "http://localhost:8000/grid/generate"            # 1km grid (once)
+curl -X POST "http://localhost:8000/grid/materialize"         # IDW onto grid
+curl "http://localhost:8000/grid/readings?parameter=pm25"     # gridded state
+curl "http://localhost:8000/forecast/grid?horizon_hours=24"   # ConvLSTM rollout
+curl -X POST "http://localhost:8000/agents/run?synthetic_grid_id=1401"  # drill
+curl "http://localhost:8000/advisory?lang=hi"                 # Hindi advisory
 ```
 
-Run the ingestion test suite (mocks all external HTTP calls — no live keys
-needed): `cd backend && pytest tests/ -v`
+Tests (all external HTTP mocked): `cd backend && pytest tests/ -v` — 38 green.
+Rendered architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
+demo script + deck outline: [`docs/DEMO.md`](docs/DEMO.md).
 
 ## Architecture (target end state)
 

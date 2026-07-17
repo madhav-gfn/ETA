@@ -34,7 +34,6 @@ from sqlalchemy.orm import Session
 
 from app.features.models import FeatureCubeManifest
 from app.geospatial.grid import load_cells
-from app.geospatial.idw import SensorSample, idw_estimate
 from app.ingestion.models import CAAQMSReading, FireDetection, MeteoReading, OSMLandUseFeature
 
 logger = logging.getLogger(__name__)
@@ -124,17 +123,34 @@ def _pollutant_grid(
         latest_by_sensor.setdefault(r.sensor_id, r)
     if not latest_by_sensor:
         return grid
-    samples = [
-        SensorSample(r.latitude, r.longitude, r.value) for r in latest_by_sensor.values()
-    ]
-    for row in range(index.n_rows):
-        for col in range(index.n_cols):
-            est = idw_estimate(
-                float(index.centroid_lat[row, col]), float(index.centroid_lon[row, col]), samples
-            )
-            if est is not None:
-                grid[row, col] = est[0]
-    return grid
+    lats = np.array([r.latitude for r in latest_by_sensor.values()])
+    lons = np.array([r.longitude for r in latest_by_sensor.values()])
+    vals = np.array([r.value for r in latest_by_sensor.values()])
+    return _idw_vectorized(index, lats, lons, vals)
+
+
+def _idw_vectorized(
+    index: GridIndex, lats: np.ndarray, lons: np.ndarray, vals: np.ndarray,
+    power: float = 2.0, radius_m: float = 15_000.0,
+) -> np.ndarray:
+    """Vectorized IDW: same math as geospatial.idw but over all cells at once
+    (needed to build thousands of historical cubes in reasonable time)."""
+    earth = 6_371_000.0
+    clat = index.centroid_lat[:, :, None]  # (H, W, 1)
+    clon = index.centroid_lon[:, :, None]
+    mean_lat = np.deg2rad((clat + lats[None, None, :]) / 2)
+    dx = np.deg2rad(lons[None, None, :] - clon) * np.cos(mean_lat) * earth
+    dy = np.deg2rad(lats[None, None, :] - clat) * earth
+    dist = np.hypot(dx, dy)  # (H, W, K)
+    in_radius = dist <= radius_m
+    dist = np.maximum(dist, 1.0)
+    w = np.where(in_radius, 1.0 / dist ** power, 0.0)
+    wsum = w.sum(axis=2)
+    est = np.divide(
+        (w * vals[None, None, :]).sum(axis=2), wsum,
+        out=np.full(index.shape, np.nan), where=wsum > 0,
+    )
+    return est.astype(np.float32)
 
 
 def _fire_grid(db: Session, index: GridIndex, hour_start: datetime, hour_end: datetime) -> np.ndarray:
