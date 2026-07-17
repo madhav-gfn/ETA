@@ -30,3 +30,4 @@ backend/app/models/checkpoints/
 .idea/
 
 # Docker volumes are managed by Docker itself, nothing to ignore here
+backend/data/
