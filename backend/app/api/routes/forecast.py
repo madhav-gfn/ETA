@@ -39,4 +39,14 @@ def get_metrics(city_slug: str = DEFAULT_CITY):
     path = CKPT_DIR / f"metrics_{city_slug}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Model not trained yet")
-    return {"model_available": model_available(city_slug), **json.loads(path.read_text())}
+    out = {"model_available": model_available(city_slug), **json.loads(path.read_text())}
+    # Merge horizon-specific evaluations (e.g. the 24h-direct model — the PS
+    # brief's judged horizon) when trained.
+    for extra in CKPT_DIR.glob(f"metrics_{city_slug}_*h.json"):
+        data = json.loads(extra.read_text())
+        h = data.get("horizon_hours")
+        for key in (f"model_rmse_{h}h", f"persistence_rmse_{h}h"):
+            if key in data:
+                out[key] = data[key]
+        out[f"beats_persistence_{h}h"] = data.get("beats_persistence")
+    return out

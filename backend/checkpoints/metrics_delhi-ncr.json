@@ -1,0 +1,9 @@
+{
+  "city_slug": "delhi-ncr",
+  "windows": 2149,
+  "test_windows": 323,
+  "model_rmse_1h": 19.099,
+  "persistence_rmse_1h": 19.09,
+  "beats_persistence": false,
+  "val_rmse_best": 18.927
+}

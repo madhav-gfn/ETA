@@ -75,11 +75,24 @@ export default function Dashboard() {
         </div>
         {metrics?.model_available && (
           <div className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
-            ConvLSTM RMSE {metrics.model_rmse_1h} vs persistence {metrics.persistence_rmse_1h}{" "}
-            {metrics.beats_persistence ? (
-              <span className="text-emerald-400">✓ beats baseline</span>
+            {metrics.model_rmse_24h !== undefined ? (
+              <>
+                24h RMSE {metrics.model_rmse_24h} vs persistence {metrics.persistence_rmse_24h}{" "}
+                {metrics.beats_persistence_24h ? (
+                  <span className="text-emerald-400">✓ beats baseline</span>
+                ) : (
+                  <span className="text-amber-400">(baseline ahead)</span>
+                )}
+              </>
             ) : (
-              <span className="text-amber-400">(baseline ahead)</span>
+              <>
+                1h RMSE {metrics.model_rmse_1h} vs persistence {metrics.persistence_rmse_1h}{" "}
+                {metrics.beats_persistence ? (
+                  <span className="text-emerald-400">✓ beats baseline</span>
+                ) : (
+                  <span className="text-amber-400">(baseline ahead)</span>
+                )}
+              </>
             )}
           </div>
         )}

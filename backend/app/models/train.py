@@ -37,7 +37,7 @@ def masked_rmse(pred: np.ndarray, target: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred[mask] - target[mask]) ** 2)))
 
 
-def train(city_slug: str = "delhi-ncr", epochs: int = 30, window: int = WINDOW) -> dict:
+def train(city_slug: str = "delhi-ncr", epochs: int = 30, window: int = WINDOW, horizon: int = 1) -> dict:
     db = SessionLocal()
     try:
         series = load_series(db, city_slug)
@@ -46,7 +46,7 @@ def train(city_slug: str = "delhi-ncr", epochs: int = 30, window: int = WINDOW) 
     if series is None:
         raise SystemExit("No cubes in manifest — run POST /features/build first")
 
-    X, y, y_persist = make_windows(series, window=window, horizon=1)
+    X, y, y_persist = make_windows(series, window=window, horizon=horizon)
     if len(X) < 20:
         raise SystemExit(f"Only {len(X)} training windows — need more backfilled history")
     logger.info("windows=%d cube_shape=%s", len(X), X.shape[1:])
@@ -106,26 +106,31 @@ def train(city_slug: str = "delhi-ncr", epochs: int = 30, window: int = WINDOW) 
     persist_rmse = masked_rmse(np.nan_to_num(y_persist[te], nan=pm25_mean), y[te])
 
     CKPT_DIR.mkdir(exist_ok=True)
+    # The 1h model is the rollout/serving checkpoint; horizon-specific models
+    # (e.g. 24h-direct, the PS brief's judged horizon) get suffixed files.
+    suffix = "" if horizon == 1 else f"_{horizon}h"
     torch.save(
         {
             "state_dict": model.state_dict(),
             "in_channels": X.shape[2],
             "window": window,
+            "horizon": horizon,
             "channel_mean": series.channel_mean.tolist(),
             "channel_std": series.channel_std.tolist(),
         },
-        CKPT_DIR / f"convlstm_{city_slug}.pt",
+        CKPT_DIR / f"convlstm_{city_slug}{suffix}.pt",
     )
     metrics = {
         "city_slug": city_slug,
+        "horizon_hours": horizon,
         "windows": len(X),
         "test_windows": te.stop - te.start,
-        "model_rmse_1h": round(model_rmse, 3),
-        "persistence_rmse_1h": round(persist_rmse, 3),
+        f"model_rmse_{horizon}h": round(model_rmse, 3),
+        f"persistence_rmse_{horizon}h": round(persist_rmse, 3),
         "beats_persistence": bool(model_rmse < persist_rmse),
         "val_rmse_best": round(best_val, 3),
     }
-    (CKPT_DIR / f"metrics_{city_slug}.json").write_text(json.dumps(metrics, indent=2))
+    (CKPT_DIR / f"metrics_{city_slug}{suffix}.json").write_text(json.dumps(metrics, indent=2))
     logger.info("DONE %s", metrics)
     return metrics
 
@@ -133,4 +138,5 @@ def train(city_slug: str = "delhi-ncr", epochs: int = 30, window: int = WINDOW) 
 if __name__ == "__main__":
     city = sys.argv[1] if len(sys.argv) > 1 else "delhi-ncr"
     n_epochs = int(sys.argv[2]) if len(sys.argv) > 2 else 30
-    train(city, n_epochs)
+    horizon_h = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+    train(city, n_epochs, horizon=horizon_h)

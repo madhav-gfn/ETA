@@ -55,6 +55,10 @@ export interface ForecastMetrics {
   beats_persistence: boolean;
   windows: number;
   test_windows: number;
+  // 24h-direct model (the PS brief's judged horizon), present once trained
+  model_rmse_24h?: number;
+  persistence_rmse_24h?: number;
+  beats_persistence_24h?: boolean;
 }
 
 export interface EvidenceItem {
