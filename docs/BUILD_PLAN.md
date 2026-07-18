@@ -21,7 +21,7 @@ Experience 15%.**
 | 2 | Data ingestion layer | ✅ Done — live-verified (OpenAQ v3 endpoints fixed; Overpass mirrors+tiling; FIRMS buffered bbox; + Open-Meteo puller added) |
 | 3 | Geospatial grid engine | ✅ Done — 2,805 cells, hourly IDW with LOO-RMSE |
 | 4 | Feature engineering & multi-modal fusion | ✅ Done — 11-channel cubes (S5P raster regrid = documented NaN-flagged slot) |
-| 5 | Hyperlocal predictive forecasting model | ✅ Code done — ConvLSTM + persistence harness; trained on 90-day backfill |
+| 5 | Hyperlocal predictive forecasting model | ✅ Done — trained on 90-day backfill (2,163 cubes); **24h RMSE 33.7 vs persistence 34.4 — beats baseline** (1h: statistical tie, expected) |
 | 6 | Multi-agent intelligence layer | ✅ Done — LangGraph + Groq, verified live via synthetic drill |
 | 7 | City & citizen dashboard | ✅ Done — Leaflet heatmap, forecast slider, enforcement panel, en/hi advisory |
 | 8 | Integration, deployment & demo packaging | 🔨 In progress — ARCHITECTURE.md + DEMO.md written; deployment pending |
