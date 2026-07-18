@@ -35,9 +35,11 @@ API health indicator (polls `GET /health` every 30 s).
 - `GET /agents/recommendations?city_slug` — latest intervention card
 - `GET /advisory?city_slug&lang` (via `AdvisoryCard`)
 
-**NEEDED:**
+**Available, not yet consumed:**
 - `GET /stats/summary?city_slug` — server-computed mean/max/category + 24h trend
-  delta (client currently averages the full readings payload; wasteful at scale)
+  delta (client still averages the full readings payload; switch to this)
+
+**NEEDED:**
 - WebSocket or SSE push for live snapshot updates (currently load-time fetch only)
 
 ### `/map` — Live Map (`app/map/page.tsx`, `components/AqiMap.tsx`)
@@ -47,11 +49,13 @@ API health indicator (polls `GET /health` every 30 s).
 - `GET /forecast/grid?city_slug&horizon_hours=72` — horizon scrubber (Live/+1h…+72h)
 - `GET /agents/recommendations` — anomaly marker + patrol route overlay
 
+**Available, not yet consumed:**
+- `GET /stations?city_slug` — CAAQMS station locations + freshness for markers
+
 **NEEDED:**
 - Vector/GeoJSON tiles or cell simplification for city counts >5k cells (payload size)
 - Parameter switcher backend support beyond pm25 (pm10, no2 exist in ingestion —
   expose via `/grid/readings?parameter=`; UI toggle is trivial to add once verified)
-- Station locations endpoint (`GET /stations?city_slug`) to render CAAQMS markers
 - Ward boundary GeoJSON (`GET /wards?city_slug`) for ward-level choropleth mode
 
 ### `/forecast` — Forecast Explorer (`app/forecast/page.tsx`)
@@ -59,8 +63,11 @@ API health indicator (polls `GET /health` every 30 s).
 - `GET /forecast/grid?horizon_hours=72` — per-horizon city mean/peak table
 - `GET /forecast/metrics` — 24h-direct + 1h RMSE vs persistence
 
+**Available, not yet consumed:**
+- `GET /forecast/cell/{grid_id}?city_slug&horizon_hours&history_hours` — observed
+  history + hourly forecast series for one cell (trend-chart payload)
+
 **NEEDED:**
-- `GET /forecast/cell/{grid_id}` — per-cell time series for trend charts
 - Uncertainty quantification in forecast response (p10/p90 bands)
 - Scenario endpoints (wind shift / rain washout what-ifs) — stretch
 
@@ -82,19 +89,22 @@ API health indicator (polls `GET /health` every 30 s).
 - `GET /agents/recommendations` — run history (client keeps session-local list)
 - `GET /grid/cells` — picks the central-Delhi cell for drills
 
+**Available, not yet consumed:**
+- `GET /agents/runs?city_slug&limit&offset` — persisted, paginated run history
+  with dispatch state + `mean_signal_to_dispatch_minutes`
+- `POST /agents/runs/{id}/status?status=dispatched|inspected|closed&assignee=` —
+  enforced lifecycle transitions, each stamped; backs the
+  signal-to-intervention-time metric the brief judges
+
 **NEEDED:**
-- Persisted run history with pagination (`GET /agents/runs?limit&offset`)
-- `POST /agents/runs/{id}/assign` + status transitions (dispatched → inspected →
-  closed) — enables the signal-to-intervention-time metric the brief judges
 - Evidence-pack export (`GET /agents/runs/{id}/report.pdf`)
 
 ### `/advisory` — Citizen Advisory (`app/advisory/page.tsx`)
 **Uses today:**
-- `GET /advisory?city_slug&lang` — `en` and `hi` live; kn/ta/bn/mr buttons render
-  disabled and activate automatically once `lib/aqi.ts` `LANGS[].live` is flipped
+- `GET /advisory?city_slug&lang` — all six languages live (`en|hi|kn|ta|bn|mr`),
+  LLM-generated in-script with script-correct fallback templates
 
 **NEEDED:**
-- Backend support for `lang=kn|ta|bn|mr` (LLM prompt already language-pluggable)
 - `GET /advisory/wards?city_slug` — per-ward advisories vs vulnerability layer
   (schools, hospitals, outdoor-worker zones)
 - Push-channel endpoints (SMS/IVR/webpush subscriptions) — stretch
@@ -104,11 +114,13 @@ API health indicator (polls `GET /health` every 30 s).
 - `GET /grid/readings` for Delhi NCR; other four cities are static "onboarding
   planned" cards driven by `lib/aqi.ts` `CITIES[]`
 
+**Available, not yet consumed:**
+- `GET /cities` — registered cities with live/onboarding state, headline stats,
+  and model availability (replaces the hardcoded `CITIES` array)
+
 **NEEDED:**
 - Onboard a second city (grid definition + ingestion + training) — every backend
   table is already keyed by `city_slug`, so this is config + compute, not schema
-- `GET /cities` — list of onboarded cities with headline stats (replaces the
-  hardcoded `CITIES` array)
 - Cross-city comparison endpoint (trend, intervention effectiveness, NCAP compliance)
 
 ### `/data` — Data & Pipeline (`app/data/page.tsx`)
@@ -116,9 +128,11 @@ API health indicator (polls `GET /health` every 30 s).
 - `GET /health`, `GET /grid/cells` (cell count), `GET /grid/readings` (snapshot time)
 - Source table is static copy describing the five ingestion feeds
 
+**Available, not yet consumed:**
+- `GET /ingestion/summary?city_slug` — consolidated per-source health: last run
+  (status, records, error), table row counts, and data freshness
+
 **NEEDED:**
-- `GET /ingestion/status` — per-source last-run timestamp, row counts, errors
-  (ingestion routes are currently POST-trigger-only with no consolidated status)
 - Auth-gated manual re-ingestion buttons in the UI once that exists
 
 ---

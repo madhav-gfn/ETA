@@ -22,3 +22,10 @@ class AgentRunRecord(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=False)  # AgentRunResult JSON
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Dispatch lifecycle — backs the brief's "signal → intervention" metric.
+    # new → dispatched → inspected → closed; each transition stamps its time.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
+    assigned_to: Mapped[str] = mapped_column(String(128), nullable=True)
+    dispatched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    inspected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)

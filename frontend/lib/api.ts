@@ -125,5 +125,109 @@ export const runAgentDrill = (city = "delhi-ncr", syntheticGridId?: number) =>
   post<AgentRun & { anomaly_found: boolean; message?: string }>(
     `/agents/run?city_slug=${city}${syntheticGridId ? `&synthetic_grid_id=${syntheticGridId}` : ""}`
   );
-export const getAdvisory = (city = "delhi-ncr", lang: "en" | "hi" = "en") =>
+export type AdvisoryLang = "en" | "hi" | "kn" | "ta" | "bn" | "mr";
+
+export const getAdvisory = (city = "delhi-ncr", lang: AdvisoryLang = "en") =>
   get<AdvisoryResponse>(`/advisory?city_slug=${city}&lang=${lang}`);
+
+// --- Backend contract additions (SITEMAP "NEEDED" items now live) ---
+
+export interface StatsSummary {
+  city_slug: string;
+  parameter: string;
+  measured_at: string | null;
+  mean?: number;
+  max?: number;
+  cells_reporting?: number;
+  category?: string | null;
+  trend_delta_24h?: number | null;
+  trend_compared_to?: string | null;
+}
+
+export interface StationInfo {
+  location_id: number;
+  station_name: string;
+  latitude: number;
+  longitude: number;
+  last_measured_at: string | null;
+  parameter_count: number;
+}
+
+export interface CityHeadline {
+  city_slug: string;
+  display_name: string;
+  bbox: [number, number, number, number];
+  live: boolean;
+  model_available: boolean;
+  measured_at: string | null;
+  mean_pm25: number | null;
+  max_pm25: number | null;
+  cells_reporting: number;
+  category?: string;
+}
+
+export interface IngestionSourceSummary {
+  source: string;
+  table_rows: number;
+  latest_data_at: string | null;
+  last_run: {
+    started_at: string;
+    finished_at: string | null;
+    status: string;
+    records_ingested: number;
+    error_message: string | null;
+  } | null;
+}
+
+export type RunStatus = "new" | "dispatched" | "inspected" | "closed";
+
+export interface TrackedAgentRun extends AgentRun {
+  run_id: number;
+  status: RunStatus;
+  assigned_to: string | null;
+  dispatched_at: string | null;
+  inspected_at: string | null;
+  closed_at: string | null;
+  signal_to_dispatch_minutes: number | null;
+}
+
+export interface AgentRunsPage {
+  city_slug: string;
+  total: number;
+  limit: number;
+  offset: number;
+  mean_signal_to_dispatch_minutes: number | null;
+  runs: TrackedAgentRun[];
+}
+
+export interface CellForecast {
+  city_slug: string;
+  grid_id: number;
+  centroid_lat: number;
+  centroid_lon: number;
+  horizon_hours: number;
+  generated_from: string;
+  last_observed_pm25: number | null;
+  history: { timestep: string; pm25: number }[];
+  forecast: { timestep: string; pm25: number }[];
+}
+
+export const getStatsSummary = (city = "delhi-ncr", parameter = "pm25") =>
+  get<StatsSummary>(`/stats/summary?city_slug=${city}&parameter=${parameter}`);
+export const getStations = (city = "delhi-ncr") =>
+  get<{ city_slug: string; station_count: number; stations: StationInfo[] }>(
+    `/stations?city_slug=${city}`
+  );
+export const getCities = () => get<{ cities: CityHeadline[] }>("/cities");
+export const getIngestionSummary = (city = "delhi-ncr") =>
+  get<{ city_slug: string; sources: IngestionSourceSummary[] }>(
+    `/ingestion/summary?city_slug=${city}`
+  );
+export const getAgentRuns = (city = "delhi-ncr", limit = 20, offset = 0) =>
+  get<AgentRunsPage>(`/agents/runs?city_slug=${city}&limit=${limit}&offset=${offset}`);
+export const updateRunStatus = (runId: number, status: RunStatus, assignee?: string) =>
+  post<TrackedAgentRun>(
+    `/agents/runs/${runId}/status?status=${status}${assignee ? `&assignee=${encodeURIComponent(assignee)}` : ""}`
+  );
+export const getCellForecast = (gridId: number, city = "delhi-ncr", horizon = 24) =>
+  get<CellForecast>(`/forecast/cell/${gridId}?city_slug=${city}&horizon_hours=${horizon}`);

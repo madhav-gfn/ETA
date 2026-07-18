@@ -8,7 +8,7 @@ GeoAlchemy2 `Geometry` types alongside these tables, not instead of them.
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
@@ -41,3 +41,24 @@ def init_db() -> None:
     from app.ingestion import models  # noqa: F401  (registers tables on Base)
 
     Base.metadata.create_all(bind=engine)
+    _apply_column_migrations()
+
+
+# create_all only creates missing tables — it never alters existing ones, so
+# columns added to a model after its table first shipped need an explicit
+# ALTER. Postgres-only (tests build their SQLite schema fresh via create_all).
+_COLUMN_MIGRATIONS = [
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'new'",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS assigned_to VARCHAR(128)",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS inspected_at TIMESTAMPTZ",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ",
+]
+
+
+def _apply_column_migrations() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        for stmt in _COLUMN_MIGRATIONS:
+            conn.execute(text(stmt))
