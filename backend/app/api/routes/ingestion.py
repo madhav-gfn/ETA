@@ -6,7 +6,7 @@ backfilling before the scheduler has had a chance to run.
 """
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -15,12 +15,28 @@ from app.ingestion.cities import DEFAULT_CITY
 from app.ingestion.common import track_run
 from app.ingestion.firms_fires import pull_fire_detections
 from app.ingestion.meteo_openmeteo import backfill_meteo, pull_meteo
-from app.ingestion.models import IngestionRunLog
+from app.ingestion.models import (
+    CAAQMSReading,
+    FireDetection,
+    IngestionRunLog,
+    MeteoReading,
+    OSMLandUseFeature,
+    Sentinel5PProduct,
+)
 from app.ingestion.osm_landuse import pull_osm_land_use
 from app.ingestion.sentinel5p import pull_sentinel5p_products
 from app.schemas.ingestion import CAAQMSReadingOut, IngestionRunLogOut, IngestionRunResult
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
+
+# source -> (raw table, column marking how fresh its data is)
+SOURCE_TABLES = {
+    "caaqms": (CAAQMSReading, CAAQMSReading.measured_at),
+    "firms": (FireDetection, FireDetection.ingested_at),
+    "osm": (OSMLandUseFeature, OSMLandUseFeature.fetched_at),
+    "sentinel5p": (Sentinel5PProduct, Sentinel5PProduct.fetched_at),
+    "meteo": (MeteoReading, MeteoReading.measured_at),
+}
 
 
 @router.post("/caaqms/run", response_model=IngestionRunResult)
@@ -81,6 +97,40 @@ async def trigger_meteo_backfill(
     return IngestionRunResult(
         source="meteo-backfill", city_slug=city_slug, records_ingested=run.records_ingested, status=run.status
     )
+
+
+@router.get("/summary")
+def ingestion_summary(city_slug: str = DEFAULT_CITY, db: Session = Depends(get_db)):
+    """Consolidated per-source pipeline health for the /data dashboard page:
+    last run outcome, total rows landed, and how fresh the newest row is."""
+    sources = []
+    for source, (model, freshness_col) in SOURCE_TABLES.items():
+        last_run = db.execute(
+            select(IngestionRunLog)
+            .where(IngestionRunLog.source == source, IngestionRunLog.city_slug == city_slug)
+            .order_by(IngestionRunLog.started_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        table_rows, latest_data_at = db.execute(
+            select(func.count(), func.max(freshness_col)).where(model.city_slug == city_slug)
+        ).one()
+        sources.append(
+            {
+                "source": source,
+                "table_rows": table_rows,
+                "latest_data_at": latest_data_at.isoformat() if latest_data_at else None,
+                "last_run": None
+                if last_run is None
+                else {
+                    "started_at": last_run.started_at.isoformat(),
+                    "finished_at": last_run.finished_at.isoformat() if last_run.finished_at else None,
+                    "status": last_run.status,
+                    "records_ingested": last_run.records_ingested,
+                    "error_message": last_run.error_message,
+                },
+            }
+        )
+    return {"city_slug": city_slug, "sources": sources}
 
 
 @router.get("/status", response_model=list[IngestionRunLogOut])

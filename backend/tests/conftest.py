@@ -21,9 +21,11 @@ def test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    # Only the raw ingestion tables use portable column types SQLite can
-    # create; the Step 3 grid tables carry a PostGIS Geometry column, so
-    # they're excluded here — grid logic is tested at the pure-function level.
+    # Only tables with portable column types SQLite can create; grid_cells
+    # carries a PostGIS Geometry column, so it's excluded here — grid logic
+    # is tested at the pure-function level.
+    from app.agents.models import AgentRunRecord
+    from app.geospatial.models import GridReading
     from app.ingestion import models
 
     ingestion_tables = [
@@ -33,6 +35,8 @@ def test_engine():
         models.Sentinel5PProduct.__table__,
         models.MeteoReading.__table__,
         models.IngestionRunLog.__table__,
+        GridReading.__table__,
+        AgentRunRecord.__table__,
     ]
     Base.metadata.create_all(bind=engine, tables=ingestion_tables)
     yield engine

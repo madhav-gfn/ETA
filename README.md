@@ -199,9 +199,10 @@ and runs the full graph against otherwise real data.
 `GET /advisory?lang=en|hi` computes the current city mean and peak PM2.5 from
 the gridded snapshot, maps them to the CPCB category bands, and generates
 plain-language health guidance with the LLM (again with a deterministic
-template fallback). The Hindi variant is generated, not string-swapped. The
-frontend exposes four more languages (Kannada, Tamil, Bengali, Marathi) as
-disabled controls that activate when the backend accepts those codes.
+template fallback). Six languages are live — English, Hindi, Kannada, Tamil,
+Bengali, Marathi (`lang=en|hi|kn|ta|bn|mr`) — each generated in its own
+script, not string-swapped, with a script-correct fallback template per
+language.
 
 ## Frontend
 
@@ -239,17 +240,24 @@ to consume once the backend grows them, is maintained in
 | Method and path | Purpose |
 |---|---|
 | `GET /health` | Liveness plus environment name |
-| `POST /ingestion/{caaqms,firms,osm,sentinel5p}/run` | Manual pull per source |
+| `POST /ingestion/{caaqms,firms,osm,sentinel5p,meteo}/run` | Manual pull per source |
 | `GET /ingestion/status` | Run history from `ingestion_run_log` |
+| `GET /ingestion/summary` | Consolidated per-source health: last run, row counts, data freshness |
 | `POST /grid/generate` | One-time grid generation for a city |
 | `POST /grid/materialize` | IDW of the latest hour onto the grid |
 | `GET /grid/cells` | Cell centroids and array indices |
 | `GET /grid/readings?parameter=` | Latest gridded snapshot |
 | `GET /forecast/grid?horizon_hours=` | Full-grid rollout up to 72 h |
+| `GET /forecast/cell/{grid_id}` | Per-cell observed history plus hourly forecast series |
 | `GET /forecast/metrics` | RMSE versus persistence, 1 h and 24 h |
 | `POST /agents/run?synthetic_grid_id=` | Run the agent graph, optionally on an injected anomaly |
 | `GET /agents/recommendations` | Recent enforcement plans |
-| `GET /advisory?lang=en\|hi` | Citizen health advisory |
+| `GET /agents/runs?limit=&offset=` | Paginated run history with dispatch state and response-time metric |
+| `POST /agents/runs/{id}/status` | Dispatch lifecycle: new → dispatched → inspected → closed |
+| `GET /advisory?lang=` | Citizen health advisory (`en`, `hi`, `kn`, `ta`, `bn`, `mr`) |
+| `GET /stats/summary` | Server-computed city snapshot: mean, max, CPCB category, 24 h trend |
+| `GET /stations` | CAAQMS station locations and freshness for map markers |
+| `GET /cities` | Registered cities with live/onboarding state and headline stats |
 
 ## Getting started
 
@@ -293,11 +301,12 @@ reloads silently fail to apply.
 cd backend && pytest tests/ -v
 ```
 
-38 tests, all green. Every external HTTP boundary (OpenAQ, FIRMS, Overpass,
+59 tests, all green. Every external HTTP boundary (OpenAQ, FIRMS, Overpass,
 CDSE, Open-Meteo, LLM providers) is mocked, so the suite runs without any
 API keys or network access. Coverage includes gap-fill interpolation math,
 per-source response parsing, OData filter construction, IDW numerics, cube
-assembly channel ordering, agent graph state transitions, and route wiring.
+assembly channel ordering, agent graph state transitions, dispatch-lifecycle
+transitions, advisory language fallbacks, and route wiring.
 
 ```bash
 cd frontend && npm run build
@@ -336,7 +345,9 @@ routes.
 Steps 1 through 7 of the build plan are complete and live-verified: the
 pipeline runs end to end from live ingestion through gridding, forecasting,
 agents, advisory, and the dashboard. Step 8 (deployment and demo packaging)
-is in progress. The near-term roadmap, in priority order: consolidated
-ingestion status endpoint, persisted agent run history with dispatch
-tracking, per-cell forecast series for trend charts, ward-name mapping over
-grid ids, and a second city.
+is in progress. Recently landed from the roadmap: consolidated ingestion
+summary, persisted agent run history with dispatch tracking (the
+signal-to-intervention metric the brief judges), per-cell forecast series,
+server-computed city stats, station and city listing endpoints, and four
+more advisory languages. Still open, in priority order: ward-name mapping
+over grid ids, a second city, and deployment.

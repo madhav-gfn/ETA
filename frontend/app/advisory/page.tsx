@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAdvisory, type AdvisoryResponse } from "@/lib/api";
+import { getAdvisory, type AdvisoryLang, type AdvisoryResponse } from "@/lib/api";
 import { AQI_BANDS, LANGS } from "@/lib/aqi";
 import {
   Badge,
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 
 export default function AdvisoryPage() {
-  const [lang, setLang] = useState<"en" | "hi">("en");
+  const [lang, setLang] = useState<AdvisoryLang>("en");
   const [data, setData] = useState<AdvisoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -53,7 +53,7 @@ export default function AdvisoryPage() {
                     aria-checked={lang === l.code}
                     disabled={!l.live}
                     title={l.live ? l.label : `${l.label} — coming soon`}
-                    onClick={() => l.live && setLang(l.code as "en" | "hi")}
+                    onClick={() => l.live && setLang(l.code)}
                     className={`ux4g-btn ux4g-btn-xs rounded-md px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-gov-400 ${
                       lang === l.code
                         ? "ux4g-btn-primary"
@@ -127,8 +127,7 @@ export default function AdvisoryPage() {
         <PlannedNote>
           Push channels (SMS/IVR/app notifications), vulnerability mapping (schools,
           hospitals, outdoor-worker zones vs forecast AQI), and per-ward subscription
-          preferences are planned — the remaining four languages activate once the backend
-          advisory endpoint accepts them.
+          preferences are planned.
         </PlannedNote>
       </div>
     </>
