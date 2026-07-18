@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import advisory, agents, features, forecast, grid, health, ingestion
+from app.api.routes import advisory, agents, features, forecast, grid, health, ingestion, stats
 from app.core.config import get_settings
 from app.core.db import init_db
 from app.ingestion.scheduler import start_scheduler, stop_scheduler
@@ -58,6 +58,7 @@ app.include_router(features.router)
 app.include_router(forecast.router)
 app.include_router(agents.router)
 app.include_router(advisory.router)
+app.include_router(stats.router)
 
 
 @app.get("/")

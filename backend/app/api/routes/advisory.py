@@ -10,26 +10,22 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.llm import complete
+from app.core.aqi import cpcb_category
 from app.core.db import get_db
 from app.geospatial.models import GridReading
 from app.ingestion.cities import DEFAULT_CITY, get_city
 
 router = APIRouter(prefix="/advisory", tags=["advisory"])
 
-
-def _aqi_category(pm25: float) -> str:
-    if pm25 <= 30:
-        return "Good"
-    if pm25 <= 60:
-        return "Satisfactory"
-    if pm25 <= 90:
-        return "Moderate"
-    if pm25 <= 120:
-        return "Poor"
-    if pm25 <= 250:
-        return "Very Poor"
-    return "Severe"
-
+# What the LLM is asked to write in; keys double as the set of accepted langs.
+LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi (Devanagari script)",
+    "kn": "Kannada (Kannada script)",
+    "ta": "Tamil (Tamil script)",
+    "bn": "Bengali (Bengali script)",
+    "mr": "Marathi (Devanagari script)",
+}
 
 FALLBACK = {
     "en": "PM2.5 in {city} is currently {value:.0f} µg/m³ ({category}). "
@@ -39,6 +35,22 @@ FALLBACK = {
     "hi": "{city} में PM2.5 वर्तमान में {value:.0f} µg/m³ ({category}) है। "
           "संवेदनशील समूह (बच्चे, बुज़ुर्ग, श्वसन रोगी) लंबे समय तक बाहरी परिश्रम "
           "से बचें। बाहर N95 मास्क पहनें और व्यस्त यातायात के समय खिड़कियाँ बंद रखें।",
+    "kn": "{city} ನಲ್ಲಿ PM2.5 ಪ್ರಸ್ತುತ {value:.0f} µg/m³ ({category}) ಇದೆ. "
+          "ಸೂಕ್ಷ್ಮ ಗುಂಪುಗಳು (ಮಕ್ಕಳು, ವೃದ್ಧರು, ಉಸಿರಾಟದ ರೋಗಿಗಳು) ದೀರ್ಘಕಾಲದ ಹೊರಾಂಗಣ "
+          "ಶ್ರಮವನ್ನು ಮಿತಿಗೊಳಿಸಬೇಕು. ಹೊರಗೆ N95 ಮಾಸ್ಕ್ ಧರಿಸಿ ಮತ್ತು ದಟ್ಟಣೆಯ "
+          "ಸಮಯದಲ್ಲಿ ಕಿಟಕಿಗಳನ್ನು ಮುಚ್ಚಿಡಿ.",
+    "ta": "{city} இல் PM2.5 தற்போது {value:.0f} µg/m³ ({category}) ஆக உள்ளது. "
+          "உணர்திறன் மிக்க குழுக்கள் (குழந்தைகள், முதியவர்கள், சுவாச நோயாளிகள்) "
+          "நீண்ட நேர வெளிப்புற உழைப்பைக் குறைக்க வேண்டும். வெளியில் N95 முகக்கவசம் "
+          "அணியுங்கள்; போக்குவரத்து நெரிசல் நேரங்களில் ஜன்னல்களை மூடி வையுங்கள்.",
+    "bn": "{city}-এ PM2.5 বর্তমানে {value:.0f} µg/m³ ({category})। "
+          "সংবেদনশীল গোষ্ঠী (শিশু, প্রবীণ, শ্বাসকষ্টের রোগী) দীর্ঘ সময় বাইরের "
+          "পরিশ্রম সীমিত রাখুন। বাইরে N95 মাস্ক পরুন এবং ব্যস্ত যানবাহনের সময় "
+          "জানালা বন্ধ রাখুন।",
+    "mr": "{city} मध्ये PM2.5 सध्या {value:.0f} µg/m³ ({category}) आहे. "
+          "संवेदनशील गट (लहान मुले, वृद्ध, श्वसन रुग्ण) दीर्घकाळ बाहेरील श्रम "
+          "टाळावेत. बाहेर N95 मास्क वापरा आणि वाहतूक गर्दीच्या वेळी खिडक्या "
+          "बंद ठेवा.",
 }
 
 
@@ -68,12 +80,12 @@ def get_advisory(
         return {"city_slug": city_slug, "lang": lang, "advisory": None,
                 "detail": "No gridded readings yet"}
 
-    category = _aqi_category(mean_pm25)
+    category = cpcb_category(mean_pm25)
     lang = lang if lang in FALLBACK else "en"
     fallback_text = FALLBACK[lang].format(
         city=city.display_name, value=mean_pm25, category=category
     )
-    language_name = "Hindi (Devanagari script)" if lang == "hi" else "English"
+    language_name = LANGUAGE_NAMES[lang]
     llm_text = complete(
         system=(
             f"You are a public health communicator for an Indian city government. Write a "

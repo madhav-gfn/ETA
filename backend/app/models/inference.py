@@ -48,9 +48,10 @@ def model_available(city_slug: str) -> bool:
     return (CKPT_DIR / f"convlstm_{city_slug}.pt").exists()
 
 
-def forecast_grid(db: Session, city_slug: str, horizon_hours: int = 24) -> dict | None:
-    """Rollout forecast. Returns per-horizon PM2.5 grids plus timestamps, or
-    None when there's no checkpoint or not enough recent cubes."""
+def _rollout(db: Session, city_slug: str, horizon_hours: int):
+    """Shared autoregressive rollout. Returns (series, preds) where preds is a
+    list of (step, timestamp, un-normalized PM2.5 grid) for every hourly step,
+    or None when there's no checkpoint or not enough recent cubes."""
     loaded = _load_model(city_slug)
     if loaded is None:
         return None
@@ -78,15 +79,14 @@ def forecast_grid(db: Session, city_slug: str, horizon_hours: int = 24) -> dict 
         ).scalars().all()
     }
 
-    horizons = {}
+    preds: list[tuple[int, object, np.ndarray]] = []
     with torch.no_grad():
         for step in range(1, horizon_hours + 1):
             x = torch.from_numpy(np.transpose(frames, (0, 3, 1, 2))[None])  # (1,T,C,H,W)
             pred_norm = model(x).numpy()[0]  # (H, W), normalized
             pred = pred_norm * std[PM25_CH] + mean[PM25_CH]
             ts = last_ts + timedelta(hours=step)
-            if step in (1, 6, 12, 24, 48, 72) or step == horizon_hours:
-                horizons[step] = {"timestep": ts.isoformat(), "pm25": pred.round(2).tolist()}
+            preds.append((step, ts, pred))
 
             # Next input frame: copy the last one, replace pm25 with the
             # prediction, refresh meteo channels from the forecast if we have it.
@@ -104,11 +104,49 @@ def forecast_grid(db: Session, city_slug: str, horizon_hours: int = 24) -> dict 
                     nxt[:, :, 7] = (np.cos(rad) - mean[7]) / std[7]
             frames = np.concatenate([frames[1:], nxt[None]], axis=0)
 
+    return series, preds
+
+
+def forecast_grid(db: Session, city_slug: str, horizon_hours: int = 24) -> dict | None:
+    """Rollout forecast. Returns per-horizon PM2.5 grids plus timestamps, or
+    None when there's no checkpoint or not enough recent cubes."""
+    rolled = _rollout(db, city_slug, horizon_hours)
+    if rolled is None:
+        return None
+    series, preds = rolled
+
+    horizons = {
+        step: {"timestep": ts.isoformat(), "pm25": pred.round(2).tolist()}
+        for step, ts, pred in preds
+        if step in (1, 6, 12, 24, 48, 72) or step == horizon_hours
+    }
     return {
         "city_slug": city_slug,
-        "generated_from": last_ts.isoformat(),
+        "generated_from": series.timesteps[-1].isoformat(),
         "horizon_hours": horizon_hours,
         "grid_shape": [series.cubes.shape[1], series.cubes.shape[2]],
         "valid_mask": series.valid_mask.tolist(),
         "horizons": horizons,
+    }
+
+
+def forecast_cell(
+    db: Session, city_slug: str, row_idx: int, col_idx: int, horizon_hours: int = 24
+) -> dict | None:
+    """Hourly forecast series for one grid cell — backs the per-cell trend
+    chart. Also returns the last observed value, which doubles as the
+    persistence baseline for every horizon."""
+    rolled = _rollout(db, city_slug, horizon_hours)
+    if rolled is None:
+        return None
+    series, preds = rolled
+
+    last_observed = series.raw_pm25[-1, row_idx, col_idx]
+    return {
+        "generated_from": series.timesteps[-1].isoformat(),
+        "last_observed_pm25": None if np.isnan(last_observed) else round(float(last_observed), 2),
+        "forecast": [
+            {"timestep": ts.isoformat(), "pm25": round(float(pred[row_idx, col_idx]), 2)}
+            for _, ts, pred in preds
+        ],
     }

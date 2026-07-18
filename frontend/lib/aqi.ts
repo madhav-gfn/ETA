@@ -35,8 +35,8 @@ export const CITIES = [
 export const LANGS = [
   { code: "en", label: "English", native: "English", live: true },
   { code: "hi", label: "Hindi", native: "हिन्दी", live: true },
-  { code: "kn", label: "Kannada", native: "ಕನ್ನಡ", live: false },
-  { code: "ta", label: "Tamil", native: "தமிழ்", live: false },
-  { code: "bn", label: "Bengali", native: "বাংলা", live: false },
-  { code: "mr", label: "Marathi", native: "मराठी", live: false },
+  { code: "kn", label: "Kannada", native: "ಕನ್ನಡ", live: true },
+  { code: "ta", label: "Tamil", native: "தமிழ்", live: true },
+  { code: "bn", label: "Bengali", native: "বাংলা", live: true },
+  { code: "mr", label: "Marathi", native: "मराठी", live: true },
 ] as const;
