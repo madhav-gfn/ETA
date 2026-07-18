@@ -1,149 +1,183 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import AdvisoryCard from "@/components/AdvisoryCard";
-import EnforcementPanel from "@/components/EnforcementPanel";
 import {
-  getForecast,
   getForecastMetrics,
-  getGridCells,
   getGridReadings,
   getRecommendations,
-  runAgentDrill,
   type AgentRun,
   type ForecastMetrics,
-  type ForecastResponse,
-  type GridCellInfo,
   type GridReadingsResponse,
 } from "@/lib/api";
+import { pm25Band } from "@/lib/aqi";
+import CountUp from "@/components/fx/CountUp";
+import Reveal from "@/components/fx/Reveal";
+import { Badge, Card, CardTitle, EmptyState, PageHeader, Skeleton, StatCard } from "@/components/ui";
 
-const AqiMap = dynamic(() => import("@/components/AqiMap"), { ssr: false });
-
-const HORIZON_STEPS = [
-  { label: "Live", step: null },
-  { label: "+1h", step: 1 },
-  { label: "+6h", step: 6 },
-  { label: "+12h", step: 12 },
-  { label: "+24h", step: 24 },
-  { label: "+48h", step: 48 },
-  { label: "+72h", step: 72 },
-] as const;
-
-export default function Dashboard() {
-  const [cells, setCells] = useState<GridCellInfo[]>([]);
+export default function OverviewPage() {
   const [readings, setReadings] = useState<GridReadingsResponse | null>(null);
-  const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [metrics, setMetrics] = useState<ForecastMetrics | null>(null);
-  const [forecastStep, setForecastStep] = useState<number | null>(null);
-  const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
-  const [drillRunning, setDrillRunning] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<AgentRun | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getGridCells().then((d) => setCells(d.cells)).catch(() => {});
-    getGridReadings().then(setReadings).catch(() => {});
-    getForecast("delhi-ncr", 72).then(setForecast).catch(() => setForecast(null));
-    getForecastMetrics().then(setMetrics).catch(() => setMetrics(null));
-    getRecommendations()
-      .then((d) => d.runs.length > 0 && setAgentRun(d.runs[0]))
-      .catch(() => {});
+    Promise.allSettled([
+      getGridReadings().then(setReadings),
+      getForecastMetrics().then(setMetrics),
+      getRecommendations().then((d) => d.runs.length > 0 && setLastRun(d.runs[0])),
+    ]).finally(() => setLoading(false));
   }, []);
 
-  const onDrill = useCallback(() => {
-    setDrillRunning(true);
-    // Central-Delhi cell for a realistic drill site.
-    const central = cells.find((c) => c.row_idx === 27 && c.col_idx === 23);
-    runAgentDrill("delhi-ncr", central?.grid_id)
-      .then((d) => {
-        if (d.anomaly_found) setAgentRun(d);
-      })
-      .finally(() => setDrillRunning(false));
-  }, [cells]);
+  const stats = useMemo(() => {
+    if (!readings || readings.readings.length === 0) return null;
+    const values = readings.readings.map((r) => r.value);
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const max = Math.max(...values);
+    return { mean, max, cells: values.length };
+  }, [readings]);
+
+  const band = stats ? pm25Band(stats.mean) : null;
 
   return (
-    <main className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            UrbanAir Intel <span className="text-sky-400">· Delhi NCR</span>
-          </h1>
-          <p className="mt-1 text-sm text-slate-400">
-            1km digital twin — live AQI, 72h hyperlocal forecast, source attribution &amp;
-            enforcement dispatch.
-          </p>
+    <>
+      <PageHeader
+        title={
+          <>
+            City Overview <span className="gradient-text">· Delhi NCR</span>
+          </>
+        }
+        subtitle="Live 1 km digital twin of the airshed — current state, forecast skill, and the latest agent-driven intervention at a glance."
+        actions={
+          <Link
+            href="/map"
+            className="ux4g-btn ux4g-btn-primary ux4g-btn-md rounded-lg px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-gov-400"
+          >
+            Open live map →
+          </Link>
+        }
+      />
+
+      {loading ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-28" />
+          ))}
         </div>
-        {metrics?.model_available && (
-          <div className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
-            {metrics.model_rmse_24h !== undefined ? (
-              <>
-                24h RMSE {metrics.model_rmse_24h} vs persistence {metrics.persistence_rmse_24h}{" "}
-                {metrics.beats_persistence_24h ? (
-                  <span className="text-emerald-400">✓ beats baseline</span>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="City mean PM2.5"
+            value={stats ? <CountUp value={stats.mean} /> : "—"}
+            unit="µg/m³"
+            accent={band ? "" : "text-neutral-500"}
+            hint={
+              band && (
+                <span className="flex items-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: band.color }}
+                  />
+                  {band.label}
+                </span>
+              )
+            }
+          />
+          <StatCard
+            label="Peak cell PM2.5"
+            value={stats ? <CountUp value={stats.max} /> : "—"}
+            unit="µg/m³"
+            hint={stats ? `across ${stats.cells} grid cells` : "no gridded snapshot yet"}
+          />
+          <StatCard
+            label="24h forecast RMSE"
+            value={metrics?.model_rmse_24h ?? metrics?.model_rmse_1h ?? "—"}
+            unit="µg/m³"
+            hint={
+              metrics ? (
+                metrics.beats_persistence_24h ?? metrics.beats_persistence ? (
+                  <span className="text-emerald-700">
+                    beats persistence ({metrics.persistence_rmse_24h ?? metrics.persistence_rmse_1h})
+                  </span>
                 ) : (
-                  <span className="text-amber-400">(baseline ahead)</span>
-                )}
-              </>
-            ) : (
-              <>
-                1h RMSE {metrics.model_rmse_1h} vs persistence {metrics.persistence_rmse_1h}{" "}
-                {metrics.beats_persistence ? (
-                  <span className="text-emerald-400">✓ beats baseline</span>
-                ) : (
-                  <span className="text-amber-400">(baseline ahead)</span>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </header>
-
-      <div className="flex flex-wrap items-center gap-2">
-        {HORIZON_STEPS.map(({ label, step }) => {
-          const disabled = step !== null && (!forecast || !forecast.horizons[String(step)]);
-          return (
-            <button
-              key={label}
-              disabled={disabled}
-              onClick={() => setForecastStep(step)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-                forecastStep === step
-                  ? "bg-sky-600 text-white"
-                  : disabled
-                    ? "cursor-not-allowed bg-slate-900 text-slate-600"
-                    : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-        {readings?.measured_at && (
-          <span className="ml-2 text-xs text-slate-500">
-            live snapshot: {new Date(readings.measured_at).toLocaleString()}
-          </span>
-        )}
-        {selected && <span className="ml-auto text-xs text-sky-300">{selected}</span>}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="h-[540px] lg:col-span-2">
-          <AqiMap
-            cells={cells}
-            readings={readings}
-            forecast={forecast}
-            forecastStep={forecastStep}
-            agentRun={agentRun}
-            onCellClick={(cell, v) =>
-              setSelected(`cell ${cell.grid_id} · PM2.5 ${v?.toFixed(0) ?? "—"} µg/m³`)
+                  <span className="text-amber-700">baseline ahead</span>
+                )
+              ) : (
+                "model not trained yet"
+              )
+            }
+          />
+          <StatCard
+            label="Snapshot time"
+            value={
+              readings?.measured_at
+                ? new Date(readings.measured_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "—"
+            }
+            hint={
+              readings?.measured_at
+                ? new Date(readings.measured_at).toLocaleDateString()
+                : "run the ingestion + grid pipeline"
             }
           />
         </div>
-        <div className="flex flex-col gap-4">
+      )}
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <Reveal delay={0.1}>
           <AdvisoryCard />
-          <EnforcementPanel run={agentRun} onDrill={onDrill} drillRunning={drillRunning} />
-        </div>
+        </Reveal>
+
+        <Reveal delay={0.2}>
+        <Card>
+          <CardTitle
+            actions={
+              <Link
+                href="/enforcement"
+                className="text-xs text-gov-600 outline-none hover:text-gov-700 focus-visible:ring-2 focus-visible:ring-gov-500"
+              >
+                All runs →
+              </Link>
+            }
+          >
+            Latest intervention
+          </CardTitle>
+          {lastRun ? (
+            <div className="flex flex-col gap-2 text-sm">
+              <p className="text-neutral-800">
+                PM2.5 {lastRun.alert.forecast_value.toFixed(0)} µg/m³ anomaly at cell{" "}
+                {lastRun.alert.grid_id}{" "}
+                {lastRun.alert.synthetic && <Badge tone="amber">drill</Badge>}
+              </p>
+              <p className="text-neutral-600">
+                Attributed to{" "}
+                <span className="font-medium capitalize text-saffron-600">
+                  {lastRun.attribution.source_category.replace(/_/g, " ")}
+                </span>{" "}
+                ({(lastRun.attribution.confidence * 100).toFixed(0)}% confidence) —{" "}
+                {lastRun.plan.route_summary}.
+              </p>
+              <p className="text-xs text-neutral-500">
+                Completed {new Date(lastRun.completed_at).toLocaleString()}
+              </p>
+            </div>
+          ) : (
+            <EmptyState title="No agent runs yet">
+              Trigger the monitoring → attribution → enforcement pipeline from the{" "}
+              <Link href="/enforcement" className="text-gov-600 underline">
+                Enforcement
+              </Link>{" "}
+              page.
+            </EmptyState>
+          )}
+        </Card>
+        </Reveal>
       </div>
-    </main>
+    </>
   );
 }

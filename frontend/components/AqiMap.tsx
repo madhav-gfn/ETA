@@ -4,16 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Rectangle, Polyline, CircleMarker, Tooltip } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import type { AgentRun, ForecastResponse, GridCellInfo, GridReadingsResponse } from "@/lib/api";
-
-// Indian AQI-ish PM2.5 color ramp
-function pm25Color(v: number): string {
-  if (v <= 30) return "#22c55e";
-  if (v <= 60) return "#84cc16";
-  if (v <= 90) return "#eab308";
-  if (v <= 120) return "#f97316";
-  if (v <= 250) return "#ef4444";
-  return "#7f1d1d";
-}
+import { pm25Color } from "@/lib/aqi";
 
 // ~1km cell half-extent in degrees at Delhi latitude
 const HALF_LAT = 0.0045;
@@ -51,7 +42,7 @@ export default function AqiMap({ cells, readings, forecast, forecastStep, agentR
     return m;
   }, [cells, readings, forecast, forecastStep]);
 
-  if (!mounted) return <div className="h-full w-full animate-pulse rounded-lg bg-slate-800" />;
+  if (!mounted) return <div className="h-full w-full animate-pulse rounded-lg bg-neutral-100" />;
 
   const routeCells = agentRun?.plan.ranked_cells ?? [];
 
@@ -64,7 +55,7 @@ export default function AqiMap({ cells, readings, forecast, forecastStep, agentR
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors'
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
       />
       {cells.map((cell) => {
         const v = valueByGridId.get(cell.grid_id);
@@ -92,7 +83,7 @@ export default function AqiMap({ cells, readings, forecast, forecastStep, agentR
           pathOptions={{ color: "#f43f5e", weight: 3, fillOpacity: 0.2 }}
         >
           <Tooltip permanent direction="top">
-            ⚠ anomaly {agentRun.alert.forecast_value.toFixed(0)} µg/m³
+            Anomaly · {agentRun.alert.forecast_value.toFixed(0)} µg/m³
             {agentRun.alert.synthetic ? " (drill)" : ""}
           </Tooltip>
         </CircleMarker>
