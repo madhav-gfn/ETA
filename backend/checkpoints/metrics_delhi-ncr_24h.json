@@ -1,14 +1,16 @@
 {
   "city_slug": "delhi-ncr",
   "horizon_hours": 24,
-  "windows": 2133,
-  "train_windows": 1493,
-  "val_windows": 285,
-  "test_windows": 285,
-  "epochs_ran": 12,
-  "model_rmse_24h": 34.091,
-  "persistence_rmse_24h": 31.657,
-  "beats_persistence": false,
-  "val_rmse_best": 30.096,
-  "trained_at": "2026-07-18T23:03:20.258381+00:00"
+  "window": 24,
+  "residual": false,
+  "windows": 2122,
+  "train_windows": 1485,
+  "val_windows": 271,
+  "test_windows": 272,
+  "epochs_ran": 10,
+  "model_rmse_24h": 31.694,
+  "persistence_rmse_24h": 32.049,
+  "beats_persistence": true,
+  "val_rmse_best": 30.408,
+  "trained_at": "2026-07-19T15:00:57.612289+00:00"
 }
