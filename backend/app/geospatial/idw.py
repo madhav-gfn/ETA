@@ -14,6 +14,8 @@ adequate at city scale (<100km) and much faster than geodesics.
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 DEFAULT_POWER = 2.0
 DEFAULT_SEARCH_RADIUS_M = 15_000.0
 # A sensor essentially on top of the centroid: avoid a 1/0 weight blow-up.
@@ -35,6 +37,15 @@ def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dx = math.radians(lon2 - lon1) * math.cos(mean_lat) * EARTH_RADIUS_M
     dy = math.radians(lat2 - lat1) * EARTH_RADIUS_M
     return math.hypot(dx, dy)
+
+
+def distance_m_vec(lat1, lon1, lat2, lon2) -> np.ndarray:
+    """Vectorized equirectangular distance in meters; inputs broadcast, so it
+    covers point-to-many ((), (N,)) and pairwise ((M,1), (N,)) shapes alike."""
+    mean_lat = np.deg2rad((lat1 + lat2) / 2)
+    dx = np.deg2rad(lon2 - lon1) * np.cos(mean_lat) * EARTH_RADIUS_M
+    dy = np.deg2rad(lat2 - lat1) * EARTH_RADIUS_M
+    return np.hypot(dx, dy)
 
 
 def idw_estimate(
