@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: urbanair-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-urbanair}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-urbanair}
+      POSTGRES_DB: ${POSTGRES_DB:-urbanair}
+    ports:
+      # Host port 5433: a native PostgreSQL on this machine owns 5432 and
+      # silently shadows the container for localhost connections.
+      - "5433:5432"
+    volumes:
+      - urbanair_pg_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-urbanair}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: urbanair-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - urbanair_redis_data:/data
+
+volumes:
+  urbanair_pg_data:
+  urbanair_redis_data:

@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Consistent, visible keyboard focus everywhere — UX4G primary */
+:focus-visible {
+  outline: 2px solid #4a2bc2;
+  outline-offset: 2px;
+}
+
+/* Slim scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d9d9d9 transparent;
+}
+
+body {
+  background-color: #fafafa;
+  color: #171717;
+}
+
+/* ---- Soft ambient wash (light, professional) ---- */
+@keyframes aurora-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(6%, -4%) scale(1.15);
+  }
+  100% {
+    transform: translate(-4%, 5%) scale(0.95);
+  }
+}
+
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(100px);
+  opacity: 0.1;
+  animation: aurora-drift 28s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+/* ---- Gradient headline text — UX4G indigo ramp ---- */
+.gradient-text {
+  background: linear-gradient(100deg, #3d239f 0%, #4a2bc2 50%, #6a4eff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---- Professional card + cursor spotlight ---- */
+.glass-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      420px circle at var(--spot-x, 50%) var(--spot-y, 0%),
+      rgba(74, 43, 194, 0.045),
+      transparent 65%
+    ),
+    rgba(255, 255, 255, 0.92);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+.glass-card:hover {
+  border-color: rgba(74, 43, 194, 0.35);
+  box-shadow: 0 4px 20px rgba(36, 20, 92, 0.08);
+}
+
+/* Subtle blueprint grid behind the app */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(23, 23, 23, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 23, 23, 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 40%, transparent 100%);
+}
+
+/* Animated pulse ring for live indicators */
+@keyframes ping-soft {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.ping-soft {
+  animation: ping-soft 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "city_slug": "delhi-ncr",
+  "horizon_hours": 24,
+  "windows": 2128,
+  "test_windows": 320,
+  "model_rmse_24h": 33.735,
+  "persistence_rmse_24h": 34.376,
+  "beats_persistence": true,
+  "val_rmse_best": 31.607
+}
