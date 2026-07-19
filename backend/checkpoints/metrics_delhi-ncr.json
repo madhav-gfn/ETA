@@ -1,9 +1,14 @@
 {
   "city_slug": "delhi-ncr",
-  "windows": 2149,
-  "test_windows": 323,
-  "model_rmse_1h": 19.099,
-  "persistence_rmse_1h": 19.09,
-  "beats_persistence": false,
-  "val_rmse_best": 18.927
+  "horizon_hours": 1,
+  "windows": 2156,
+  "train_windows": 1509,
+  "val_windows": 311,
+  "test_windows": 312,
+  "epochs_ran": 12,
+  "model_rmse_1h": 17.436,
+  "persistence_rmse_1h": 18.815,
+  "beats_persistence": true,
+  "val_rmse_best": 17.461,
+  "trained_at": "2026-07-18T22:16:46.636778+00:00"
 }
