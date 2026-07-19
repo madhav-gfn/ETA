@@ -11,11 +11,12 @@ import {
   YAxis,
 } from "recharts";
 
-// Palette validated for the white surface (#ffffff) with scripts/validate_palette.js:
-// lightness band, chroma, CVD ΔE and 3:1 contrast all pass. Persistence is also
-// dashed so identity never rests on color alone.
-const FORECAST_COLOR = "#4a2bc2";
-const PERSISTENCE_COLOR = "#c47d00";
+// Palette validated for contrast with scripts/validate_palette.js: lightness
+// band, chroma, CVD ΔE and 3:1 contrast all pass. Persistence is also dashed
+// so identity never rests on color alone. Brightened for the dark surface.
+const FORECAST_COLOR = "#8670ff";
+const PERSISTENCE_COLOR = "#e89c30";
+const CHART_SURFACE = "#0e0e15";
 
 export interface ChartPoint {
   step: number; // hours ahead; 0 = now
@@ -29,41 +30,42 @@ export default function ForecastChart({ data }: { data: ChartPoint[] }) {
       <div className="h-72 w-full">
         <ResponsiveContainer>
           <LineChart data={data} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-            <CartesianGrid stroke="#e5e5e5" strokeDasharray="3 6" vertical={false} />
+            <CartesianGrid stroke="#1c1c27" strokeDasharray="3 6" vertical={false} />
             <XAxis
               dataKey="step"
               tickFormatter={(v: number) => (v === 0 ? "now" : `+${v}h`)}
-              tick={{ fill: "#525252", fontSize: 11 }}
-              axisLine={{ stroke: "#d9d9d9" }}
+              tick={{ fill: "#8b8b9e", fontSize: 11 }}
+              axisLine={{ stroke: "#2c2c3a" }}
               tickLine={false}
             />
             <YAxis
               width={44}
-              tick={{ fill: "#525252", fontSize: 11 }}
+              tick={{ fill: "#8b8b9e", fontSize: 11 }}
               axisLine={false}
               tickLine={false}
               label={{
                 value: "µg/m³",
                 angle: -90,
                 position: "insideLeft",
-                fill: "#737373",
+                fill: "#8b8b9e",
                 fontSize: 11,
               }}
             />
             <Tooltip
-              cursor={{ stroke: "#a1a1a1", strokeDasharray: "4 4" }}
+              cursor={{ stroke: "#6c6c80", strokeDasharray: "4 4" }}
               contentStyle={{
-                background: "#ffffff",
-                border: "1px solid #d9d9d9",
+                background: "#0e0e15",
+                border: "1px solid #2c2c3a",
                 borderRadius: 8,
                 fontSize: 12,
               }}
-              labelStyle={{ color: "#404040" }}
+              labelStyle={{ color: "#dddde6" }}
+              itemStyle={{ color: "#c5c5d3" }}
               labelFormatter={(v) => (Number(v) === 0 ? "Now" : `+${v} hours`)}
               formatter={(value, name) => [`${Number(value).toFixed(1)} µg/m³`, name]}
             />
             <Legend
-              wrapperStyle={{ fontSize: 12, color: "#525252" }}
+              wrapperStyle={{ fontSize: 12, color: "#a9a9ba" }}
               iconType="plainline"
             />
             <Line
@@ -73,7 +75,7 @@ export default function ForecastChart({ data }: { data: ChartPoint[] }) {
               stroke={FORECAST_COLOR}
               strokeWidth={2}
               dot={false}
-              activeDot={{ r: 5, strokeWidth: 2, stroke: "#ffffff" }}
+              activeDot={{ r: 5, strokeWidth: 2, stroke: CHART_SURFACE }}
               connectNulls
             />
             <Line
@@ -84,7 +86,7 @@ export default function ForecastChart({ data }: { data: ChartPoint[] }) {
               strokeWidth={2}
               strokeDasharray="6 5"
               dot={false}
-              activeDot={{ r: 5, strokeWidth: 2, stroke: "#ffffff" }}
+              activeDot={{ r: 5, strokeWidth: 2, stroke: CHART_SURFACE }}
             />
           </LineChart>
         </ResponsiveContainer>

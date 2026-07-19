@@ -26,7 +26,7 @@ export function Card({
     <section
       ref={ref}
       onMouseMove={onMove}
-      className={`ux4g-card glass-card rounded-xl border border-neutral-200 p-4 shadow-lg shadow-neutral-900/5 ${className}`}
+      className={`ux4g-card glass-card rounded-xl border border-neutral-200 p-4 shadow-lg shadow-black/30 backdrop-blur-sm ${className}`}
     >
       {children}
     </section>
@@ -123,11 +123,11 @@ export function Badge({
   tone?: "slate" | "sky" | "emerald" | "amber" | "rose";
 }) {
   const tones = {
-    slate: "bg-neutral-100 text-neutral-700 border-neutral-300",
-    sky: "bg-gov-50 text-gov-700 border-gov-300",
-    emerald: "bg-emerald-50 text-emerald-800 border-emerald-300",
-    amber: "bg-saffron-50 text-saffron-700 border-saffron-300",
-    rose: "bg-rose-50 text-rose-800 border-rose-300",
+    slate: "bg-neutral-500/10 text-neutral-700 border-neutral-500/25",
+    sky: "bg-gov-500/10 text-gov-200 border-gov-500/30",
+    emerald: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+    amber: "bg-saffron-400/10 text-saffron-300 border-saffron-400/30",
+    rose: "bg-rose-500/10 text-rose-300 border-rose-500/30",
   } as const;
   return (
     <span
@@ -164,7 +164,7 @@ export function EmptyState({
 
 export function PlannedNote({ children }: { children: ReactNode }) {
   return (
-    <div className="ux4g-alert ux4g-alert-info rounded-xl border border-gov-200" role="note">
+    <div className="ux4g-alert ux4g-alert-info rounded-xl border border-gov-500/30" role="note">
       <span className="ux4g-alert-icon" aria-hidden="true">
         <Info className="h-5 w-5" strokeWidth={1.75} />
       </span>
@@ -197,9 +197,9 @@ export function ProgressBar({
       style={
         {
           "--ux4g-progress-value": value,
-          "--ux4g-progress-track": "#f5f5f5",
-          "--ux4g-progress-fill-start": "#4a2bc2",
-          "--ux4g-progress-fill-end": "#6a4eff",
+          "--ux4g-progress-track": "#1c1c27",
+          "--ux4g-progress-fill-start": "#6a4eff",
+          "--ux4g-progress-fill-end": "#22d3ee",
         } as React.CSSProperties
       }
     >

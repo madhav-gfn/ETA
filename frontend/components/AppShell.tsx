@@ -44,7 +44,7 @@ function Nav() {
             aria-current={active ? "page" : undefined}
             className={`relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gov-500 ${
               active
-                ? "font-medium text-gov-700"
+                ? "font-medium text-gov-200"
                 : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-800"
             }`}
           >
@@ -52,7 +52,7 @@ function Nav() {
               <motion.span
                 layoutId="nav-pill"
                 aria-hidden="true"
-                className="absolute inset-0 rounded-lg border border-gov-200 bg-gov-50"
+                className="absolute inset-0 rounded-lg border border-gov-500/40 bg-gov-500/15"
                 transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 400, damping: 32 }}
               />
             )}
@@ -83,7 +83,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </a>
 
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-neutral-200 bg-white/85 backdrop-blur lg:flex">
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-neutral-200 bg-neutral-100/70 backdrop-blur lg:flex">
         <Brand />
         <Nav />
         <div className="mt-auto p-3">
@@ -103,7 +103,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             initial={{ x: -40, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="absolute left-0 top-0 flex h-full w-64 flex-col border-r border-neutral-200 bg-white"
+            className="absolute left-0 top-0 flex h-full w-64 flex-col border-r border-neutral-200 bg-neutral-100"
           >
             <Brand />
             <Nav />
@@ -115,21 +115,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Government identity strip (prototype for a GoI smart-city deployment) */}
-        <div className="flex items-center justify-between gap-3 bg-gov-900 px-4 py-1.5 text-[11px] text-gov-100 sm:px-6">
-          <span lang="hi">
-            भारत सरकार <span aria-hidden="true">|</span>{" "}
-            <span lang="en">Government of India — prototype</span>
-          </span>
-          <span className="hidden sm:inline text-gov-200">
-            Built on UX4G · Digital India design system
-          </span>
-        </div>
-
         <ApiOfflineBanner />
 
         {/* Mobile top bar */}
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-neutral-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-neutral-200 bg-neutral-100/80 px-4 py-3 backdrop-blur lg:hidden">
           <button
             onClick={() => setOpen(true)}
             aria-label="Open navigation"
@@ -146,9 +135,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
 
-        <footer className="border-t border-neutral-200 px-6 py-4 text-xs text-neutral-400">
-          UrbanAir Intel — CAAQMS · Sentinel-5P · NASA FIRMS · OSM · 1 km grid digital twin.
-          Data is indicative; verify with official CPCB bulletins before enforcement action.
+        <footer className="flex flex-col gap-1 border-t border-neutral-200 px-6 py-4 text-xs text-neutral-400 sm:flex-row sm:items-center sm:justify-between">
+          <span>© {new Date().getFullYear()} UrbanAir Intel · Sources: CAAQMS, Sentinel-5P, NASA FIRMS, OSM</span>
+          <span className="text-neutral-300">Forecasts are indicative — cross-check against official CPCB bulletins</span>
         </footer>
       </div>
     </div>

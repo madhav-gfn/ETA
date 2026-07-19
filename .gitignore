@@ -38,3 +38,8 @@ training_cubes_*.zip
 
 # Docker volumes are managed by Docker itself, nothing to ignore here
 backend/data/
+
+# Local staging area for the trained dataset handoff (dump + cube zip) —
+# multi-hundred-MB local artifacts, never meant to be committed.
+datafile/
+*.dump

@@ -31,7 +31,7 @@ export default function BackendStatus() {
   return (
     <p
       role="status"
-      className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-600"
+      className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-100 px-3 py-2 text-xs text-neutral-600"
     >
       <span aria-hidden="true" className="relative flex h-2 w-2">
         {!error && health && (

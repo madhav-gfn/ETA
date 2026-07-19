@@ -2,24 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Consistent, visible keyboard focus everywhere — UX4G primary */
+/* Consistent, visible keyboard focus everywhere */
 :focus-visible {
-  outline: 2px solid #4a2bc2;
+  outline: 2px solid #8670ff;
   outline-offset: 2px;
 }
 
-/* Slim scrollbars */
+/* Slim scrollbars, tuned for the dark surface */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d9d9d9 transparent;
+  scrollbar-color: rgba(140, 140, 165, 0.4) transparent;
 }
 
-body {
-  background-color: #fafafa;
-  color: #171717;
-}
-
-/* ---- Soft ambient wash (light, professional) ---- */
+/* ---- Ambient glow wash (dark, futuristic) ---- */
 @keyframes aurora-drift {
   0% {
     transform: translate(0, 0) scale(1);
@@ -35,43 +30,43 @@ body {
 .aurora-blob {
   position: absolute;
   border-radius: 9999px;
-  filter: blur(100px);
-  opacity: 0.1;
+  filter: blur(110px);
+  opacity: 0.16;
   animation: aurora-drift 28s ease-in-out infinite alternate;
   will-change: transform;
 }
 
-/* ---- Gradient headline text — UX4G indigo ramp ---- */
+/* ---- Gradient headline text — violet → cyan ---- */
 .gradient-text {
-  background: linear-gradient(100deg, #3d239f 0%, #4a2bc2 50%, #6a4eff 100%);
+  background: linear-gradient(100deg, #7c5cff 0%, #a391ff 45%, #22d3ee 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-/* ---- Professional card + cursor spotlight ---- */
+/* ---- Glass card + cursor spotlight, dark surface ---- */
 .glass-card {
   position: relative;
   overflow: hidden;
   background:
     radial-gradient(
       420px circle at var(--spot-x, 50%) var(--spot-y, 0%),
-      rgba(74, 43, 194, 0.045),
+      rgba(134, 112, 255, 0.09),
       transparent 65%
     ),
-    rgba(255, 255, 255, 0.92);
+    rgba(255, 255, 255, 0.03);
   transition: border-color 200ms ease, box-shadow 200ms ease;
 }
 .glass-card:hover {
-  border-color: rgba(74, 43, 194, 0.35);
-  box-shadow: 0 4px 20px rgba(36, 20, 92, 0.08);
+  border-color: rgba(134, 112, 255, 0.4);
+  box-shadow: 0 8px 30px -8px rgba(106, 78, 255, 0.35);
 }
 
 /* Subtle blueprint grid behind the app */
 .bg-grid {
   background-image:
-    linear-gradient(rgba(23, 23, 23, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(23, 23, 23, 0.035) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 40%, transparent 100%);
 }

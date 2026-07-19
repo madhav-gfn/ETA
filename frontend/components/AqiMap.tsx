@@ -42,7 +42,7 @@ export default function AqiMap({ cells, readings, forecast, forecastStep, agentR
     return m;
   }, [cells, readings, forecast, forecastStep]);
 
-  if (!mounted) return <div className="h-full w-full animate-pulse rounded-lg bg-neutral-100" />;
+  if (!mounted) return <div className="h-full w-full animate-pulse rounded-lg bg-neutral-200" />;
 
   const routeCells = agentRun?.plan.ranked_cells ?? [];
 
@@ -55,7 +55,7 @@ export default function AqiMap({ cells, readings, forecast, forecastStep, agentR
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors'
-        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
       {cells.map((cell) => {
         const v = valueByGridId.get(cell.grid_id);
