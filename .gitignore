@@ -23,6 +23,13 @@ backend/app/ingestion/raw_cache/
 backend/app/models/checkpoints/
 *.pt
 *.ckpt
+# ... but ship the trained serving checkpoints (~1 MB each) so teammates get
+# a working forecast without training:
+!backend/checkpoints/*.pt
+
+# Training bundles / logs
+training_cubes_*.zip
+.train_*.log
 
 # OS / editor
 .DS_Store

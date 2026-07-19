@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from app.features.cube import CHANNELS
+from app.features.channels import CHANNELS
 from app.models.convlstm import ConvLSTMForecaster
 from app.models.dataset import (
     PM25_CH,
@@ -88,19 +88,26 @@ def _eval_rmse(
     pairs: list[tuple[int, int]],
     window: int,
     device: str,
+    residual: bool = False,
     batch: int = 16,
 ) -> float:
-    """Masked RMSE on the raw µg/m³ scale, accumulated batch-wise."""
+    """Masked RMSE on the raw µg/m³ scale, accumulated batch-wise. In
+    residual mode the model output is a correction added onto the
+    persistence frame, so cells persistence can't see are excluded."""
     mean = float(series.stats.mean[PM25_CH])
     std = float(series.stats.std[PM25_CH])
     sq_sum, count = 0.0, 0
     model.eval()
     with torch.no_grad():
         for i in range(0, len(pairs), batch):
-            X, y, _ = gather_batch(series, pairs[i : i + batch], window)
+            X, y, y_persist = gather_batch(series, pairs[i : i + batch], window)
             out = model(torch.from_numpy(X).to(device)).cpu().numpy()
-            pred = out * std + mean
-            m = ~np.isnan(y)
+            if residual:
+                pred = y_persist + out * std
+                m = ~np.isnan(y) & ~np.isnan(y_persist)
+            else:
+                pred = out * std + mean
+                m = ~np.isnan(y)
             sq_sum += float(((pred[m] - y[m]) ** 2).sum())
             count += int(m.sum())
     return float(np.sqrt(sq_sum / count)) if count else float("nan")
@@ -112,10 +119,16 @@ def train(
     window: int = WINDOW,
     horizon: int = 1,
     cubes_dir: str | None = None,
+    residual: bool = False,
 ) -> dict:
     """Train from the Postgres manifest, or — when ``cubes_dir`` is given —
     straight from a directory of .npy cubes (remote/GPU training without a
-    database; see docs on portable training)."""
+    database; see docs/REMOTE_TRAINING.md).
+
+    ``residual``: predict the correction to the persistence frame instead of
+    the absolute value — the direct attack on the same-hour-yesterday
+    baseline for horizon-24 evaluation models. Residual checkpoints are for
+    horizon evaluation only; the serving rollout refuses them."""
     seed_everything()
 
     if cubes_dir is not None:
@@ -164,12 +177,16 @@ def train(
         total_loss, n_batches = 0.0, 0
         for i in range(0, len(order), BATCH_SIZE):
             chunk = [train_pairs[j] for j in order[i : i + BATCH_SIZE]]
-            X, y, _ = gather_batch(series, chunk, window)
+            X, y, y_persist = gather_batch(series, chunk, window)
             xb = torch.from_numpy(X).to(device)
-            mask = torch.from_numpy(~np.isnan(y)).to(device)
-            yb = torch.from_numpy(
-                (np.nan_to_num(y, nan=pm25_mean) - pm25_mean) / pm25_std
-            ).to(device)
+            if residual:
+                target = np.nan_to_num(y - y_persist, nan=0.0) / pm25_std
+                mask_np = ~np.isnan(y) & ~np.isnan(y_persist)
+            else:
+                target = (np.nan_to_num(y, nan=pm25_mean) - pm25_mean) / pm25_std
+                mask_np = ~np.isnan(y)
+            mask = torch.from_numpy(mask_np).to(device)
+            yb = torch.from_numpy(target.astype(np.float32)).to(device)
             opt.zero_grad()
             loss = _masked_mse_loss(model(xb), yb, mask)
             loss.backward()
@@ -179,7 +196,7 @@ def train(
             n_batches += 1
         train_loss = total_loss / max(n_batches, 1)
 
-        val_rmse = _eval_rmse(model, series, val_pairs, window, device)
+        val_rmse = _eval_rmse(model, series, val_pairs, window, device, residual=residual)
         sched.step(val_rmse)
         epochs_ran = epoch + 1
         logger.info(
@@ -207,7 +224,10 @@ def train(
         for i in range(0, len(test_pairs), 16):
             X, y, y_persist = gather_batch(series, test_pairs[i : i + 16], window)
             out = model(torch.from_numpy(X).to(device)).cpu().numpy()
-            preds.append(out * pm25_std + pm25_mean)
+            if residual:
+                preds.append(y_persist + out * pm25_std)
+            else:
+                preds.append(out * pm25_std + pm25_mean)
             ys.append(y)
             persists.append(y_persist)
     test_pred = np.concatenate(preds)
@@ -231,6 +251,7 @@ def train(
             "channel_mean": series.stats.mean.tolist(),
             "channel_std": series.stats.std.tolist(),
             "channel_median": series.stats.median.tolist(),
+            "residual": residual,
             "seed": SEED,
             "trained_at": datetime.now(timezone.utc).isoformat(),
         },
@@ -239,6 +260,8 @@ def train(
     metrics = {
         "city_slug": city_slug,
         "horizon_hours": horizon,
+        "window": window,
+        "residual": residual,
         "windows": len(pairs),
         "train_windows": len(train_pairs),
         "val_windows": len(val_pairs),
@@ -266,5 +289,24 @@ if __name__ == "__main__":
         help="train from a directory of .npy cubes instead of the Postgres manifest "
         "(portable remote/GPU training)",
     )
+    parser.add_argument(
+        "--window",
+        type=int,
+        default=WINDOW,
+        help="input window length in hours (24 lets the model see a full diurnal cycle)",
+    )
+    parser.add_argument(
+        "--residual",
+        action="store_true",
+        help="predict the correction to the persistence frame instead of the absolute "
+        "value (horizon-evaluation models only; the serving rollout refuses these)",
+    )
     args = parser.parse_args()
-    train(args.city_slug, args.epochs, horizon=args.horizon, cubes_dir=args.cubes_dir)
+    train(
+        args.city_slug,
+        args.epochs,
+        window=args.window,
+        horizon=args.horizon,
+        cubes_dir=args.cubes_dir,
+        residual=args.residual,
+    )

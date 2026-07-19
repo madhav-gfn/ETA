@@ -166,3 +166,87 @@ def test_bearing_vec_cardinal_directions():
     assert b[1] == pytest.approx(90.0, abs=1.0)  # east
     assert b[2] == pytest.approx(180.0, abs=1.0)  # south
     assert b[3] == pytest.approx(270.0, abs=1.0)  # west
+
+
+def _fake_grid_index(h=2, w=2):
+    """GridIndex without a DB: 1km-ish grid near Delhi."""
+    from app.features.cube import GridIndex
+
+    idx = object.__new__(GridIndex)
+    idx.city_slug = "testville"
+    idx.n_rows, idx.n_cols = h, w
+    idx.centroid_lat = 28.6 + np.arange(h)[:, None] * 0.009 * np.ones((h, w))
+    idx.centroid_lon = 77.2 + np.arange(w)[None, :] * 0.010 * np.ones((h, w))
+    idx.lat0, idx.lon0 = 28.6, 77.2
+    idx.dlat, idx.dlon = 0.009, 0.010
+    idx.grid_ids = np.arange(h * w).reshape(h, w)
+    return idx
+
+
+def test_assemble_cube_stamps_hour_of_day_channels():
+    from app.features.cube import HOD_COS_CH, HOD_SIN_CH, _assemble_cube, _RangeData
+
+    idx = _fake_grid_index()
+    hour = datetime(2026, 7, 1, 18, tzinfo=timezone.utc)
+    data = _RangeData(
+        sensors_by_hour={("pm25", hour): [(28.6, 77.2, 90.0)]},
+        fires_by_day={},
+        meteo_by_hour={},
+    )
+    cube = _assemble_cube(idx, data, hour)
+    assert cube is not None
+    expected = 2.0 * np.pi * 18 / 24.0
+    assert np.allclose(cube[:, :, HOD_SIN_CH], np.sin(expected))
+    assert np.allclose(cube[:, :, HOD_COS_CH], np.cos(expected))
+    # no pollutant data at all -> no cube
+    assert _assemble_cube(idx, _RangeData({}, {}, {}), hour) is None
+
+
+def test_assemble_series_slices_extra_channels_for_old_checkpoints():
+    from app.models.dataset import _assemble_series
+
+    n_old = C - 2  # pre-hod checkpoint width
+    cubes = np.random.default_rng(3).normal(50, 5, size=(4, 2, 2, C)).astype(np.float32)
+    old_stats = NormStats(
+        mean=np.zeros(n_old, dtype=np.float32),
+        std=np.ones(n_old, dtype=np.float32),
+        median=np.zeros(n_old, dtype=np.float32),
+    )
+    ts = [datetime(2026, 1, 1, h, tzinfo=timezone.utc) for h in range(4)]
+    series = _assemble_series(ts, cubes.copy(), old_stats, 1.0)
+    assert series.cubes.shape[-1] == n_old  # trailing channels sliced off
+
+    too_wide = NormStats(
+        mean=np.zeros(C + 1, dtype=np.float32),
+        std=np.ones(C + 1, dtype=np.float32),
+        median=np.zeros(C + 1, dtype=np.float32),
+    )
+    with pytest.raises(ValueError, match="rebuild cubes"):
+        _assemble_series(ts, cubes.copy(), too_wide, 1.0)
+
+
+def test_residual_eval_adds_correction_to_persistence():
+    from app.models.train import _eval_rmse
+
+    class ZeroModel(torch.nn.Module):
+        def forward(self, x):
+            return torch.zeros(x.shape[0], x.shape[3], x.shape[4])
+
+    series = _series(n=20, h=3, w=3)
+    pairs = window_indices(series, window=6, horizon=2)[:4]
+    # zero correction -> prediction IS persistence -> RMSE(persist, y)
+    got = _eval_rmse(ZeroModel(), series, pairs, 6, "cpu", residual=True)
+    _, y, y_persist = gather_batch(series, pairs, 6)
+    expected = masked_rmse(y_persist, y, mask=~np.isnan(y_persist))
+    assert got == pytest.approx(expected, rel=1e-5)
+
+
+def test_serving_refuses_residual_checkpoints(tmp_path, monkeypatch):
+    import app.models.inference as inf
+
+    monkeypatch.setattr(inf, "CKPT_DIR", tmp_path)
+    torch.save(
+        {"residual": True, "in_channels": C, "state_dict": {}, "window": 12},
+        tmp_path / "convlstm_residual-test-city.pt",
+    )
+    assert inf._load_model("residual-test-city") is None

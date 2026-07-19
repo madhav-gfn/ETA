@@ -1,8 +1,9 @@
 """
 Cube-sequence dataset for Step 5 training and serving.
 
-Loads cubes from the Step 4 manifest, imputes NaNs (channel median, then 0),
-and normalizes per channel. Two leakage guards production training needs:
+Loads cubes from the Step 4 manifest (or a bare directory of .npy files —
+the remote/GPU training path), imputes NaNs (channel median, then 0), and
+normalizes per channel. Leakage guards production training needs:
 
   - Normalization/imputation stats come from the *training fraction* of the
     series only (``stats_frac``) — val/test hours never inform them. Serving
@@ -12,23 +13,34 @@ and normalizes per channel. Two leakage guards production training needs:
     materialized arrays; ``chronological_split`` accepts a purge ``gap`` so
     train/val/test windows share no underlying hours.
 
-Splits are chronological — shuffling a time series would leak the future
-into training.
+Channel compatibility: the cube layout is append-only, so when stored cubes
+carry more channels than a checkpoint was trained with, the extra trailing
+channels are sliced off — an old model keeps serving across a channel
+addition until its retrain lands.
+
+Module-level imports stay numpy-only on purpose: a Colab/Kaggle box training
+via ``load_series_from_dir`` needs nothing beyond numpy + torch. Splits are
+chronological — shuffling a time series would leak the future into training.
 """
 
+import logging
 import warnings
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.features.cube import CHANNELS
-from app.features.models import FeatureCubeManifest
+from app.features.channels import CHANNELS, PM25_CH  # noqa: F401  (PM25_CH re-exported)
 
-PM25_CH = CHANNELS.index("pm25")
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
+
+# Mirrors cube.CUBE_DIR without importing the (geo-stack-heavy) cube module.
+CUBE_DIR = Path(__file__).resolve().parents[2] / "data" / "cubes"
 
 
 @dataclass
@@ -66,13 +78,13 @@ def compute_stats(cubes: np.ndarray) -> NormStats:
 
 
 def load_series(
-    db: Session,
+    db: "Session",
     city_slug: str,
     stats: NormStats | None = None,
     stats_frac: float = 1.0,
     last_n: int | None = None,
 ) -> CubeSeries | None:
-    """Load the cube series for a city.
+    """Load the cube series for a city from the Postgres manifest.
 
     ``stats``: normalize with these precomputed stats (serving path — pass the
     checkpoint's). When None, stats are computed from the first ``stats_frac``
@@ -80,6 +92,10 @@ def load_series(
     ``last_n``: only load the most recent N cubes — serving needs one input
     window, not the full history.
     """
+    from sqlalchemy import select
+
+    from app.features.models import FeatureCubeManifest
+
     q = (
         select(FeatureCubeManifest)
         .where(FeatureCubeManifest.city_slug == city_slug)
@@ -93,8 +109,15 @@ def load_series(
     if last_n:
         rows = list(reversed(rows))
 
-    cubes = np.stack([np.load(r.storage_path) for r in rows]).astype(np.float32)
+    cubes = np.stack([np.load(_resolve_cube_path(r.storage_path)) for r in rows]).astype(np.float32)
     return _assemble_series([r.timestep for r in rows], cubes, stats, stats_frac)
+
+
+def _resolve_cube_path(storage_path: str) -> Path:
+    """Manifest paths are relative to CUBE_DIR (portable across machines);
+    absolute paths from older manifest rows still resolve as-is."""
+    p = Path(storage_path)
+    return p if p.is_absolute() else CUBE_DIR / p
 
 
 def load_series_from_dir(
@@ -121,6 +144,21 @@ def load_series_from_dir(
 def _assemble_series(
     timesteps: list[datetime], cubes: np.ndarray, stats: NormStats | None, stats_frac: float
 ) -> CubeSeries:
+    if stats is not None and len(stats.mean) != cubes.shape[-1]:
+        if len(stats.mean) < cubes.shape[-1]:
+            # Channel layout is append-only: serve an older checkpoint by
+            # slicing off the channels it never saw.
+            logger.info(
+                "Slicing cubes from %d to %d channels to match checkpoint stats",
+                cubes.shape[-1], len(stats.mean),
+            )
+            cubes = cubes[..., : len(stats.mean)]
+        else:
+            raise ValueError(
+                f"Checkpoint expects {len(stats.mean)} channels but cubes have "
+                f"{cubes.shape[-1]} — rebuild cubes (POST /features/build)"
+            )
+
     raw_pm25 = cubes[:, :, :, PM25_CH].copy()
     valid_mask = ~np.all(np.isnan(raw_pm25), axis=0)
 

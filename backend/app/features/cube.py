@@ -17,6 +17,8 @@ the city's 1km grid (H=row_idx range, W=col_idx range from Step 3):
   8 fire_frp      sum of FIRMS Fire Radiative Power (MW) landing in the cell
   9 road_density  static: primary/trunk OSM elements per cell
  10 industrial    static: industrial land-use OSM elements per cell
+ 11 hod_sin       hour-of-day sin/cos (UTC) broadcast to all cells — the
+ 12 hod_cos       diurnal cycle a 24h forecast must see to beat persistence
 
 Missing data stays NaN — never silently zero-filled (the acceptance criterion);
 consumers decide how to impute. Cubes are saved as .npy with a manifest row
@@ -248,6 +250,10 @@ def _assemble_cube(index: GridIndex, data: _RangeData, hour_start: datetime) -> 
         if loc is not None and frp is not None:
             fire[loc] += frp
     cube[:, :, 8] = fire
+
+    hod = 2.0 * np.pi * hour_start.hour / 24.0
+    cube[:, :, HOD_SIN_CH] = np.sin(hod)
+    cube[:, :, HOD_COS_CH] = np.cos(hod)
     return cube
 
 
@@ -278,19 +284,23 @@ def build_cubes(
             cube[:, :, 10] = industrial
             fname = t.strftime("%Y%m%dT%H00Z") + ".npy"
             np.save(out_dir / fname, cube)
+            # Manifest paths are stored relative to CUBE_DIR so a DB dump
+            # restores cleanly on a teammate's machine with a different
+            # checkout location; the loader resolves both forms.
+            rel_path = f"{city_slug}/{fname}"
             stmt = (
                 pg_insert(FeatureCubeManifest)
                 .values(
                     city_slug=city_slug,
                     timestep=t,
                     channels=",".join(CHANNELS),
-                    storage_path=str(out_dir / fname),
+                    storage_path=rel_path,
                     n_rows=index.n_rows,
                     n_cols=index.n_cols,
                 )
                 .on_conflict_do_update(
                     index_elements=["city_slug", "timestep"],
-                    set_={"storage_path": str(out_dir / fname), "channels": ",".join(CHANNELS)},
+                    set_={"storage_path": rel_path, "channels": ",".join(CHANNELS)},
                 )
             )
             db.execute(stmt)

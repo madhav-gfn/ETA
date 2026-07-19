@@ -22,7 +22,7 @@ import torch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.features.cube import CHANNELS
+from app.features.channels import CHANNELS
 from app.models.convlstm import ConvLSTMForecaster
 from app.models.dataset import NormStats, load_series
 from app.ingestion.models import MeteoReading
@@ -51,6 +51,12 @@ def _load_model_cached(city_slug: str, mtime_ns: int):
         ckpt = torch.load(path, map_location="cpu", weights_only=True)
     except Exception:
         logger.exception("Failed to load checkpoint %s", path)
+        return None
+    if ckpt.get("residual"):
+        # Residual checkpoints predict corrections to persistence — serving
+        # them as absolute values would be silently wrong. They exist for
+        # horizon evaluation only (see train.py --residual).
+        logger.error("Checkpoint %s is a residual model — not servable by rollout", path)
         return None
     model = ConvLSTMForecaster(in_channels=ckpt["in_channels"])
     model.load_state_dict(ckpt["state_dict"])
@@ -89,6 +95,15 @@ def _rollout(db: Session, city_slug: str, horizon_hours: int):
     window = ckpt["window"]
     stats = _ckpt_stats(ckpt)
     mean, std = stats.mean, stats.std
+    # Checkpoints trained with time-of-day channels need those channels
+    # advanced every rollout step — otherwise time freezes at the last
+    # observed hour. Indices come from the checkpoint's own channel list.
+    ckpt_channels = list(ckpt.get("channels", CHANNELS[: ckpt["in_channels"]]))
+    hod_chs = (
+        (ckpt_channels.index("hod_sin"), ckpt_channels.index("hod_cos"))
+        if "hod_sin" in ckpt_channels and "hod_cos" in ckpt_channels
+        else None
+    )
 
     series = load_series(db, city_slug, stats=stats, last_n=window)
     if series is None or len(series.timesteps) < window:
@@ -124,9 +139,15 @@ def _rollout(db: Session, city_slug: str, horizon_hours: int):
             preds.append((step, ts, pred))
 
             # Next input frame: copy the last one, replace pm25 with the
-            # prediction, refresh meteo channels from the forecast if we have it.
+            # prediction, advance the time-of-day channels, refresh meteo
+            # channels from the forecast if we have it.
             nxt = frames[-1].copy()
             nxt[:, :, PM25_CH] = (pred - mean[PM25_CH]) / std[PM25_CH]
+            if hod_chs is not None:
+                sin_ch, cos_ch = hod_chs
+                hod = 2.0 * np.pi * ts.hour / 24.0
+                nxt[:, :, sin_ch] = (np.sin(hod) - mean[sin_ch]) / std[sin_ch]
+                nxt[:, :, cos_ch] = (np.cos(hod) - mean[cos_ch]) / std[cos_ch]
             m = future_meteo.get(ts)
             if m is not None:
                 for ch, attr in METEO_CH.items():
