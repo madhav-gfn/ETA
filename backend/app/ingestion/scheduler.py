@@ -102,6 +102,29 @@ async def run_grid_materialize_job(city_slug: str = DEFAULT_CITY) -> None:
         db.close()
 
 
+async def run_cube_build_job(city_slug: str = DEFAULT_CITY) -> None:
+    """Step 4/5: hourly incremental cube build over the trailing 6 hours so
+    the model's serving window stays fresh. The trailing overlap re-builds
+    hours whose station data arrived late (CPCB feeds lag several hours);
+    manifest upserts make that idempotent."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.features.cube import build_cubes
+
+    db = SessionLocal()
+    try:
+        with track_run(db, "cubes", city_slug) as run:
+            now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            result = await asyncio.to_thread(
+                build_cubes, db, city_slug, now - timedelta(hours=6), now + timedelta(hours=1)
+            )
+            run.records_ingested = result["built"]
+    except Exception:
+        logger.exception("Cube build job failed")
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     scheduler.add_job(run_caaqms_job, IntervalTrigger(hours=1), id="caaqms_hourly", replace_existing=True)
     scheduler.add_job(
@@ -109,12 +132,20 @@ def start_scheduler() -> None:
         CronTrigger(minute=15),  # hourly at :15, after the CAAQMS pull lands
         id="grid_materialize_hourly", replace_existing=True,
     )
+    scheduler.add_job(
+        run_cube_build_job,
+        CronTrigger(minute=25),  # hourly at :25, after grid materialization at :15
+        id="cube_build_hourly", replace_existing=True,
+    )
     scheduler.add_job(run_meteo_job, IntervalTrigger(hours=1), id="meteo_hourly", replace_existing=True)
     scheduler.add_job(run_firms_job, IntervalTrigger(hours=3), id="firms_3hourly", replace_existing=True)
     scheduler.add_job(run_sentinel5p_job, IntervalTrigger(hours=24), id="sentinel5p_daily", replace_existing=True)
     scheduler.add_job(run_osm_job, CronTrigger(day=1, hour=3), id="osm_monthly", replace_existing=True)
     scheduler.start()
-    logger.info("Ingestion scheduler started: caaqms=1h, firms=3h, sentinel5p=24h, osm=monthly")
+    logger.info(
+        "Ingestion scheduler started: caaqms=1h, grid=1h, cubes=1h, meteo=1h, "
+        "firms=3h, sentinel5p=24h, osm=monthly"
+    )
 
 
 def stop_scheduler() -> None:

@@ -1,9 +1,15 @@
 """
-Step 5 serving: loads the trained checkpoint once (module-level cache) and
-produces 1..72h PM2.5 grid forecasts by autoregressive rollout — each
-predicted frame is written back into the pm25 channel of the next input
-window. Meteorology channels for future hours come from Open-Meteo forecast
-rows when available; other channels persist from the last observed frame.
+Step 5 serving: loads the trained checkpoint (cached, invalidated on retrain
+via file mtime) and produces 1..72h PM2.5 grid forecasts by autoregressive
+rollout — each predicted frame is written back into the pm25 channel of the
+next input window. Meteorology channels for future hours come from Open-Meteo
+forecast rows when available; other channels persist from the last observed
+frame.
+
+Serving-path guarantees:
+  - inputs are normalized with the *checkpoint's* stats, exactly matching
+    training — never with stats recomputed from whatever is in the DB now
+  - only the last `window` cubes are loaded per request, not the full history
 """
 
 import logging
@@ -18,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.features.cube import CHANNELS
 from app.models.convlstm import ConvLSTMForecaster
-from app.models.dataset import load_series
+from app.models.dataset import NormStats, load_series
 from app.ingestion.models import MeteoReading
 
 logger = logging.getLogger(__name__)
@@ -32,20 +38,44 @@ METEO_CH = {  # channel -> MeteoReading attribute
 }
 
 
-@lru_cache(maxsize=4)
-def _load_model(city_slug: str):
-    path = CKPT_DIR / f"convlstm_{city_slug}.pt"
-    if not path.exists():
+def _ckpt_path(city_slug: str) -> Path:
+    return CKPT_DIR / f"convlstm_{city_slug}.pt"
+
+
+@lru_cache(maxsize=8)
+def _load_model_cached(city_slug: str, mtime_ns: int):
+    # mtime_ns keys the cache so a retrained checkpoint is picked up without
+    # a process restart; stale entries just age out of the LRU.
+    path = _ckpt_path(city_slug)
+    try:
+        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception:
+        logger.exception("Failed to load checkpoint %s", path)
         return None
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model = ConvLSTMForecaster(in_channels=ckpt["in_channels"])
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     return model, ckpt
 
 
+def _load_model(city_slug: str):
+    path = _ckpt_path(city_slug)
+    if not path.exists():
+        return None
+    return _load_model_cached(city_slug, path.stat().st_mtime_ns)
+
+
 def model_available(city_slug: str) -> bool:
-    return (CKPT_DIR / f"convlstm_{city_slug}.pt").exists()
+    return _ckpt_path(city_slug).exists()
+
+
+def _ckpt_stats(ckpt: dict) -> NormStats:
+    mean = np.array(ckpt["channel_mean"], dtype=np.float32)
+    std = np.array(ckpt["channel_std"], dtype=np.float32)
+    # Older checkpoints predate the persisted median; the mean is the closest
+    # available fill value for them.
+    median = np.array(ckpt.get("channel_median", ckpt["channel_mean"]), dtype=np.float32)
+    return NormStats(mean=mean, std=std, median=median)
 
 
 def _rollout(db: Session, city_slug: str, horizon_hours: int):
@@ -57,14 +87,19 @@ def _rollout(db: Session, city_slug: str, horizon_hours: int):
         return None
     model, ckpt = loaded
     window = ckpt["window"]
-    mean = np.array(ckpt["channel_mean"], dtype=np.float32)
-    std = np.array(ckpt["channel_std"], dtype=np.float32)
+    stats = _ckpt_stats(ckpt)
+    mean, std = stats.mean, stats.std
 
-    series = load_series(db, city_slug)
+    series = load_series(db, city_slug, stats=stats, last_n=window)
     if series is None or len(series.timesteps) < window:
         return None
+    if series.timesteps[-1] - series.timesteps[0] != timedelta(hours=window - 1):
+        logger.warning(
+            "Serving window for %s is non-contiguous: %s .. %s over %d frames",
+            city_slug, series.timesteps[0], series.timesteps[-1], window,
+        )
 
-    frames = series.cubes[-window:].copy()  # normalized (T, H, W, C)
+    frames = series.cubes.copy()  # normalized (T, H, W, C)
     last_ts = series.timesteps[-1]
 
     # Pre-fetch meteo forecast rows for the horizon.
@@ -109,7 +144,9 @@ def _rollout(db: Session, city_slug: str, horizon_hours: int):
 
 def forecast_grid(db: Session, city_slug: str, horizon_hours: int = 24) -> dict | None:
     """Rollout forecast. Returns per-horizon PM2.5 grids plus timestamps, or
-    None when there's no checkpoint or not enough recent cubes."""
+    None when there's no checkpoint or not enough recent cubes. `valid_mask`
+    marks cells with PM2.5 coverage within the serving window (recent
+    coverage, not all-time)."""
     rolled = _rollout(db, city_slug, horizon_hours)
     if rolled is None:
         return None
@@ -140,6 +177,9 @@ def forecast_cell(
     if rolled is None:
         return None
     series, preds = rolled
+    n_rows, n_cols = series.raw_pm25.shape[1], series.raw_pm25.shape[2]
+    if not (0 <= row_idx < n_rows and 0 <= col_idx < n_cols):
+        return None
 
     last_observed = series.raw_pm25[-1, row_idx, col_idx]
     return {

@@ -17,6 +17,12 @@ from app.ingestion.cities import DEFAULT_CITY, get_city
 
 router = APIRouter(prefix="/advisory", tags=["advisory"])
 
+# (city, lang, latest_ts) -> response; the timestamp key self-invalidates when
+# a new hour materializes. FIFO-capped, single-instance scope like the rest of
+# the serving caches.
+_ADVISORY_CACHE: dict[tuple[str, str, str], dict] = {}
+_ADVISORY_CACHE_MAX = 256
+
 # What the LLM is asked to write in; keys double as the set of accepted langs.
 LANGUAGE_NAMES = {
     "en": "English",
@@ -82,6 +88,14 @@ def get_advisory(
 
     category = cpcb_category(mean_pm25)
     lang = lang if lang in FALLBACK else "en"
+
+    # The gridded state only changes when a new hour materializes — reuse the
+    # LLM copy until then instead of paying for a fresh call per page load.
+    cache_key = (city_slug, lang, latest_ts.isoformat())
+    cached = _ADVISORY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     fallback_text = FALLBACK[lang].format(
         city=city.display_name, value=mean_pm25, category=category
     )
@@ -99,7 +113,7 @@ def get_advisory(
         ),
         max_tokens=300,
     )
-    return {
+    result = {
         "city_slug": city_slug,
         "lang": lang,
         "measured_at": latest_ts.isoformat(),
@@ -109,3 +123,8 @@ def get_advisory(
         "advisory": llm_text or fallback_text,
         "llm_used": llm_text is not None,
     }
+    if llm_text is not None:  # don't pin a degraded fallback until the next hour
+        if len(_ADVISORY_CACHE) >= _ADVISORY_CACHE_MAX:
+            _ADVISORY_CACHE.pop(next(iter(_ADVISORY_CACHE)))
+        _ADVISORY_CACHE[cache_key] = result
+    return result

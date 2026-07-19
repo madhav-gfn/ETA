@@ -1,0 +1,19 @@
+cube range: 2026-04-18 21:30:00+00:00 .. 2026-07-18 05:00:00+00:00
+2026-07-19 02:48:19,816 Cube build for delhi-ncr: 2168 built, 0 skipped (no data)
+cubes: 2168 built, 0 skipped
+2026-07-19 02:48:46,590 windows=2156 grid=(55, 51, 11)
+2026-07-19 02:54:14,078 epoch 0 train_mse=0.4681 val_rmse=18.04 lr=0.001
+2026-07-19 03:00:46,120 epoch 1 train_mse=0.3766 val_rmse=17.82 lr=0.001
+2026-07-19 03:06:48,672 epoch 2 train_mse=0.3651 val_rmse=17.65 lr=0.001
+2026-07-19 03:10:59,454 epoch 3 train_mse=0.3555 val_rmse=17.46 lr=0.001
+2026-07-19 03:15:03,324 epoch 4 train_mse=0.3463 val_rmse=17.67 lr=0.001
+2026-07-19 03:18:14,118 epoch 5 train_mse=0.3424 val_rmse=17.47 lr=0.001
+2026-07-19 03:20:53,293 epoch 6 train_mse=0.3379 val_rmse=17.84 lr=0.001
+2026-07-19 03:24:06,003 epoch 7 train_mse=0.3263 val_rmse=17.65 lr=0.0005
+2026-07-19 03:29:04,878 epoch 8 train_mse=0.3114 val_rmse=17.55 lr=0.0005
+2026-07-19 03:33:05,878 epoch 9 train_mse=0.3081 val_rmse=17.56 lr=0.0005
+2026-07-19 03:39:45,089 epoch 10 train_mse=0.3020 val_rmse=17.52 lr=0.0005
+2026-07-19 03:46:19,925 epoch 11 train_mse=0.2979 val_rmse=17.86 lr=0.00025
+2026-07-19 03:46:19,926 early stop at epoch 11 (no val improvement in 8)
+2026-07-19 03:46:46,648 DONE {'city_slug': 'delhi-ncr', 'horizon_hours': 1, 'windows': 2156, 'train_windows': 1509, 'val_windows': 311, 'test_windows': 312, 'epochs_ran': 12, 'model_rmse_1h': 17.436, 'persistence_rmse_1h': 18.815, 'beats_persistence': True, 'val_rmse_best': 17.461, 'trained_at': '2026-07-18T22:16:46.636778+00:00'}
+METRICS {'city_slug': 'delhi-ncr', 'horizon_hours': 1, 'windows': 2156, 'train_windows': 1509, 'val_windows': 311, 'test_windows': 312, 'epochs_ran': 12, 'model_rmse_1h': 17.436, 'persistence_rmse_1h': 18.815, 'beats_persistence': True, 'val_rmse_best': 17.461, 'trained_at': '2026-07-18T22:16:46.636778+00:00'}
