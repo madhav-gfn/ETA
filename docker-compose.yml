@@ -1,3 +1,5 @@
+# Local dev only. Production (Railway) points DATABASE_URL/REDIS_URL at
+# Supabase (Postgres+PostGIS) and Upstash (Redis) instead — see docs/DEPLOY.md.
 services:
   postgres:
     image: postgis/postgis:16-3.4

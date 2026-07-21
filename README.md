@@ -17,6 +17,7 @@ training run, not a redesign.
 Full build history: [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md).
 Frontend route and endpoint contract: [`SITEMAP.md`](SITEMAP.md).
 Demo script and deck outline: [`docs/DEMO.md`](docs/DEMO.md).
+Production deploy (Railway + Supabase + Upstash + Vercel): [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ## System architecture
 
