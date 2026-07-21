@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # --- Database / cache ---
     database_url: str = "postgresql+psycopg2://urbanair:urbanair@localhost:5432/urbanair"
     redis_url: str = "redis://localhost:6379/0"
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = 7200
 
     # --- Data source API keys (Step 2) ---
     openaq_api_key: str = ""

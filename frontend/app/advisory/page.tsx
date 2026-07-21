@@ -51,15 +51,10 @@ export default function AdvisoryPage() {
                     key={l.code}
                     role="radio"
                     aria-checked={lang === l.code}
-                    disabled={!l.live}
-                    title={l.live ? l.label : `${l.label} — coming soon`}
-                    onClick={() => l.live && setLang(l.code)}
+                    title={l.label}
+                    onClick={() => setLang(l.code)}
                     className={`ux4g-btn ux4g-btn-xs rounded-md px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-gov-400 ${
-                      lang === l.code
-                        ? "ux4g-btn-primary"
-                        : l.live
-                          ? "ux4g-btn-outline-neutral"
-                          : "ux4g-btn-outline-neutral cursor-not-allowed opacity-50"
+                      lang === l.code ? "ux4g-btn-primary" : "ux4g-btn-outline-neutral"
                     }`}
                   >
                     {l.native}

@@ -11,17 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.agents.llm import complete
 from app.core.aqi import cpcb_category
+from app.core.cache import cache_get_json, cache_set_json
 from app.core.db import get_db
 from app.geospatial.models import GridReading
 from app.ingestion.cities import DEFAULT_CITY, get_city
 
 router = APIRouter(prefix="/advisory", tags=["advisory"])
-
-# (city, lang, latest_ts) -> response; the timestamp key self-invalidates when
-# a new hour materializes. FIFO-capped, single-instance scope like the rest of
-# the serving caches.
-_ADVISORY_CACHE: dict[tuple[str, str, str], dict] = {}
-_ADVISORY_CACHE_MAX = 256
 
 # What the LLM is asked to write in; keys double as the set of accepted langs.
 LANGUAGE_NAMES = {
@@ -91,8 +86,10 @@ def get_advisory(
 
     # The gridded state only changes when a new hour materializes — reuse the
     # LLM copy until then instead of paying for a fresh call per page load.
-    cache_key = (city_slug, lang, latest_ts.isoformat())
-    cached = _ADVISORY_CACHE.get(cache_key)
+    # Redis-backed (app.core.cache) so the copy is shared across workers, not
+    # regenerated once per process.
+    cache_key = f"advisory:{city_slug}:{lang}:{latest_ts.isoformat()}"
+    cached = cache_get_json(cache_key)
     if cached is not None:
         return cached
 
@@ -124,7 +121,5 @@ def get_advisory(
         "llm_used": llm_text is not None,
     }
     if llm_text is not None:  # don't pin a degraded fallback until the next hour
-        if len(_ADVISORY_CACHE) >= _ADVISORY_CACHE_MAX:
-            _ADVISORY_CACHE.pop(next(iter(_ADVISORY_CACHE)))
-        _ADVISORY_CACHE[cache_key] = result
+        cache_set_json(cache_key, result)
     return result

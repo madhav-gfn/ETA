@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import {
+  getCellForecast,
   getForecast,
   getForecastMetrics,
   getGridReadings,
+  type CellForecast,
   type ForecastMetrics,
   type ForecastResponse,
   type GridReadingsResponse,
@@ -13,6 +15,8 @@ import {
 import Reveal from "@/components/fx/Reveal";
 
 const ForecastChart = dynamic(() => import("@/components/ForecastChart"), { ssr: false });
+const CellForecastChart = dynamic(() => import("@/components/CellForecastChart"), { ssr: false });
+import type { CellChartPoint } from "@/components/CellForecastChart";
 import { pm25Band } from "@/lib/aqi";
 import {
   Badge,
@@ -31,6 +35,10 @@ export default function ForecastPage() {
   const [readings, setReadings] = useState<GridReadingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [selectedGridId, setSelectedGridId] = useState<number | null>(null);
+  const [cellForecast, setCellForecast] = useState<CellForecast | null>(null);
+  const [cellLoading, setCellLoading] = useState(false);
+
   useEffect(() => {
     Promise.allSettled([
       getForecast("delhi-ncr", 72).then(setForecast),
@@ -38,6 +46,37 @@ export default function ForecastPage() {
       getGridReadings().then(setReadings),
     ]).finally(() => setLoading(false));
   }, []);
+
+  // Hottest currently-reporting cells — the natural drill-down candidates.
+  const hotCells = useMemo(() => {
+    if (!readings) return [];
+    return [...readings.readings].sort((a, b) => b.value - a.value).slice(0, 5);
+  }, [readings]);
+
+  const loadCell = useCallback((gridId: number) => {
+    setSelectedGridId(gridId);
+    setCellLoading(true);
+    getCellForecast(gridId, "delhi-ncr", 72)
+      .then(setCellForecast)
+      .catch(() => setCellForecast(null))
+      .finally(() => setCellLoading(false));
+  }, []);
+
+  // Observed history (solid) bridged into the forecast rollout (dashed) at
+  // the seam — the last observed point is duplicated onto the forecast series
+  // so the two lines connect instead of leaving a visual gap.
+  const cellChartData = useMemo(() => {
+    if (!cellForecast) return [];
+    const points: CellChartPoint[] = cellForecast.history.map((h, i, arr) => ({
+      timestamp: h.timestep,
+      observed: h.pm25,
+      forecast: i === arr.length - 1 ? h.pm25 : null,
+    }));
+    cellForecast.forecast.forEach((f) => {
+      points.push({ timestamp: f.timestep, observed: null, forecast: f.pm25 });
+    });
+    return points;
+  }, [cellForecast]);
 
   // Per-horizon city mean / peak over valid cells.
   const rows = useMemo(() => {
@@ -188,11 +227,78 @@ export default function ForecastPage() {
         )}
       </Card>
 
+      <Card className="mt-6">
+        <CardTitle
+          actions={cellForecast && <Badge tone="sky">cell {cellForecast.grid_id}</Badge>}
+        >
+          Cell drill-down
+        </CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          {hotCells.map((c) => (
+            <button
+              key={c.grid_id}
+              onClick={() => loadCell(c.grid_id)}
+              className={`ux4g-btn ux4g-btn-sm rounded-md px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-gov-400 ${
+                selectedGridId === c.grid_id ? "ux4g-btn-primary" : "ux4g-btn-outline-neutral"
+              }`}
+            >
+              cell {c.grid_id} · {c.value.toFixed(0)} µg/m³
+            </button>
+          ))}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const id = Number(new FormData(e.currentTarget).get("gridId"));
+              if (Number.isFinite(id) && id > 0) loadCell(id);
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <input
+              name="gridId"
+              type="number"
+              min={1}
+              placeholder="Grid ID"
+              aria-label="Grid cell ID"
+              className="w-24 rounded-md border border-neutral-300 px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-gov-400"
+            />
+            <button
+              type="submit"
+              className="ux4g-btn ux4g-btn-outline-neutral ux4g-btn-sm rounded-md px-2.5 text-xs"
+            >
+              Load
+            </button>
+          </form>
+        </div>
+
+        {cellLoading ? (
+          <Skeleton className="mt-4 h-72" />
+        ) : cellForecast ? (
+          <div className="mt-4">
+            <p className="text-xs text-neutral-500">
+              Last observed{" "}
+              {cellForecast.last_observed_pm25 !== null
+                ? `${cellForecast.last_observed_pm25.toFixed(0)} µg/m³`
+                : "unavailable"}{" "}
+              · generated from {new Date(cellForecast.generated_from).toLocaleString()}
+            </p>
+            <CellForecastChart data={cellChartData} />
+          </div>
+        ) : (
+          hotCells.length > 0 && (
+            <p className="mt-3 text-sm text-neutral-500">
+              Pick a cell above to see its observed history and forecast trend.
+            </p>
+          )
+        )}
+      </Card>
+
       <div className="mt-6">
         <PlannedNote>
-          Per-ward trend charts, uncertainty bands, and meteorology-driven scenario toggles
-          (wind shift, rain washout) are planned — see SITEMAP.md for the backend endpoints
-          they need.
+          Per-cell drill-down trend charts are now live above. Per-ward aggregation,
+          uncertainty (p10/p90) bands, and meteorology-driven scenario toggles (wind shift,
+          rain washout) remain planned — they need model/backend changes beyond what
+          <code className="mx-1 rounded bg-neutral-100 px-1 py-0.5 text-xs">/forecast/cell</code>
+          exposes today.
         </PlannedNote>
       </div>
     </>

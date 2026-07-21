@@ -62,14 +62,14 @@ API health indicator (polls `GET /health` every 30 s).
 **Uses today:**
 - `GET /forecast/grid?horizon_hours=72` — per-horizon city mean/peak table
 - `GET /forecast/metrics` — 24h-direct + 1h RMSE vs persistence
-
-**Available, not yet consumed:**
-- `GET /forecast/cell/{grid_id}?city_slug&horizon_hours&history_hours` — observed
-  history + hourly forecast series for one cell (trend-chart payload)
+- `GET /forecast/cell/{grid_id}?city_slug&horizon_hours&history_hours` — cell
+  drill-down (hottest-cell quick picks + manual grid ID), observed history bridged
+  into the forecast rollout via `components/CellForecastChart.tsx`
 
 **NEEDED:**
 - Uncertainty quantification in forecast response (p10/p90 bands)
 - Scenario endpoints (wind shift / rain washout what-ifs) — stretch
+- Ward-level aggregation of the per-cell trend (needs ward boundary data — see `/map`)
 
 ### `/attribution` — Source Attribution (`app/attribution/page.tsx`)
 **Uses today:**
@@ -86,18 +86,20 @@ API health indicator (polls `GET /health` every 30 s).
 ### `/enforcement` — Enforcement Intelligence (`app/enforcement/page.tsx`)
 **Uses today:**
 - `POST /agents/run?city_slug&synthetic_grid_id` — drill trigger
-- `GET /agents/recommendations` — run history (client keeps session-local list)
 - `GET /grid/cells` — picks the central-Delhi cell for drills
-
-**Available, not yet consumed:**
 - `GET /agents/runs?city_slug&limit&offset` — persisted, paginated run history
-  with dispatch state + `mean_signal_to_dispatch_minutes`
+  with dispatch state + `mean_signal_to_dispatch_minutes` (shown as a StatCard)
 - `POST /agents/runs/{id}/status?status=dispatched|inspected|closed&assignee=` —
-  enforced lifecycle transitions, each stamped; backs the
+  lifecycle buttons in `components/EnforcementPanel.tsx` enforce the
+  new→dispatched→inspected→closed order the backend requires; backs the
   signal-to-intervention-time metric the brief judges
+- Evidence pack: client-side print/"Save as PDF" view
+  (`components/EvidencePack.tsx`) built from the tracked run — no backend
+  endpoint, uses `window.print()` over a print-only layout
 
 **NEEDED:**
-- Evidence-pack export (`GET /agents/runs/{id}/report.pdf`)
+- Server-generated, signed evidence PDF for formal legal filings (the client-side
+  print view above covers the everyday case)
 
 ### `/advisory` — Citizen Advisory (`app/advisory/page.tsx`)
 **Uses today:**
@@ -111,29 +113,28 @@ API health indicator (polls `GET /health` every 30 s).
 
 ### `/cities` — Multi-City (`app/cities/page.tsx`)
 **Uses today:**
-- `GET /grid/readings` for Delhi NCR; other four cities are static "onboarding
-  planned" cards driven by `lib/aqi.ts` `CITIES[]`
-
-**Available, not yet consumed:**
-- `GET /cities` — registered cities with live/onboarding state, headline stats,
-  and model availability (replaces the hardcoded `CITIES` array)
+- `GET /cities` — ranking table (mean/peak PM2.5, category, cells reporting, model
+  availability) for every city with a materialized snapshot, sorted worst-to-best.
+  Cities not yet returned live by the backend still render as dimmed "onboarding
+  planned" cards, driven by `lib/aqi.ts` `CITIES[]`
 
 **NEEDED:**
 - Onboard a second city (grid definition + ingestion + training) — every backend
   table is already keyed by `city_slug`, so this is config + compute, not schema
-- Cross-city comparison endpoint (trend, intervention effectiveness, NCAP compliance)
+- Cross-city comparison endpoint (intervention effectiveness, NCAP compliance) —
+  the ranking table above covers the trend-comparison half already
 
 ### `/data` — Data & Pipeline (`app/data/page.tsx`)
 **Uses today:**
 - `GET /health`, `GET /grid/cells` (cell count), `GET /grid/readings` (snapshot time)
-- Source table is static copy describing the five ingestion feeds
-
-**Available, not yet consumed:**
-- `GET /ingestion/summary?city_slug` — consolidated per-source health: last run
-  (status, records, error), table row counts, and data freshness
+- `GET /ingestion/summary?city_slug` — per-source table: rows, latest data
+  timestamp, and last-run status/records/error, merged with static descriptive
+  copy per source
 
 **NEEDED:**
-- Auth-gated manual re-ingestion buttons in the UI once that exists
+- Auth-gated manual re-ingestion buttons in the UI once that exists (endpoints are
+  live but unauthenticated and hit rate-limited external APIs — intentionally
+  not wired up yet)
 
 ---
 
@@ -151,7 +152,9 @@ API health indicator (polls `GET /health` every 30 s).
 | `app/template.tsx` | Framer-motion route-change transition |
 | `components/AqiLegend.tsx` | CPCB band legend |
 | `components/AdvisoryCard.tsx` | Compact advisory widget (Overview) |
-| `components/EnforcementPanel.tsx` | Alert → attribution → route panel |
+| `components/EnforcementPanel.tsx` | Alert → attribution → route → dispatch-lifecycle panel |
+| `components/EvidencePack.tsx` | Print-only evidence document for one enforcement run (`window.print()`) |
+| `components/CellForecastChart.tsx` | Recharts observed-vs-forecast chart for one grid cell |
 | `components/BackendStatus.tsx` | Health poller in the sidebar |
 
 ## Theme — UX4G (India's government design system)

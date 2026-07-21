@@ -100,3 +100,23 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---- Evidence pack print output (Enforcement page) ----
+   The .evidence-pack container is `hidden print:block` (see EvidencePack.tsx) —
+   invisible on screen, rendered only for print/"Save as PDF". This block hides
+   everything else in the print output so only the evidence pack appears. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .evidence-pack,
+  .evidence-pack * {
+    visibility: visible;
+  }
+  .evidence-pack {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
