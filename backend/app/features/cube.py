@@ -17,13 +17,21 @@ the city's 1km grid (H=row_idx range, W=col_idx range from Step 3):
   8 fire_frp      sum of FIRMS Fire Radiative Power (MW) landing in the cell
   9 road_density  static: primary/trunk OSM elements per cell
  10 industrial    static: industrial land-use OSM elements per cell
+ 11 hod_sin       hour-of-day sin/cos (UTC) broadcast to all cells — the
+ 12 hod_cos       diurnal cycle a 24h forecast must see to beat persistence
 
 Missing data stays NaN — never silently zero-filled (the acceptance criterion);
 consumers decide how to impute. Cubes are saved as .npy with a manifest row
 in Postgres pointing at each file.
+
+Source rows for the whole build range are prefetched in three queries and
+bucketed by hour in memory — the per-hour-per-source query pattern was
+thousands of round-trips per backfill.
 """
 
 import logging
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -36,14 +44,14 @@ from app.features.models import FeatureCubeManifest
 from app.geospatial.grid import load_cells
 from app.ingestion.models import CAAQMSReading, FireDetection, MeteoReading, OSMLandUseFeature
 
-logger = logging.getLogger(__name__)
+from app.features.channels import (  # noqa: F401  (re-exported for compat)
+    CHANNELS,
+    HOD_COS_CH,
+    HOD_SIN_CH,
+    POLLUTANT_CHANNELS,
+)
 
-CHANNELS = [
-    "pm25", "pm10", "no2",
-    "temperature", "humidity", "wind_speed", "wind_dir_sin", "wind_dir_cos",
-    "fire_frp", "road_density", "industrial",
-]
-POLLUTANT_CHANNELS = {"pm25": 0, "pm10": 1, "no2": 2}
+logger = logging.getLogger(__name__)
 
 CUBE_DIR = Path(__file__).resolve().parents[2] / "data" / "cubes"
 
@@ -92,41 +100,20 @@ def _static_osm_channels(db: Session, index: GridIndex) -> tuple[np.ndarray, np.
     roads = np.zeros(index.shape, dtype=np.float32)
     industrial = np.zeros(index.shape, dtype=np.float32)
     rows = db.execute(
-        select(OSMLandUseFeature).where(OSMLandUseFeature.city_slug == index.city_slug)
-    ).scalars().all()
-    for f in rows:
-        loc = index.locate(f.latitude, f.longitude)
+        select(
+            OSMLandUseFeature.tag_key, OSMLandUseFeature.tag_value,
+            OSMLandUseFeature.latitude, OSMLandUseFeature.longitude,
+        ).where(OSMLandUseFeature.city_slug == index.city_slug)
+    ).all()
+    for tag_key, tag_value, lat, lon in rows:
+        loc = index.locate(lat, lon)
         if loc is None:
             continue
-        if f.tag_key == "highway":
+        if tag_key == "highway":
             roads[loc] += 1.0
-        elif f.tag_key == "landuse" and f.tag_value == "industrial":
+        elif tag_key == "landuse" and tag_value == "industrial":
             industrial[loc] += 1.0
     return roads, industrial
-
-
-def _pollutant_grid(
-    db: Session, index: GridIndex, parameter: str, hour_start: datetime, hour_end: datetime
-) -> np.ndarray:
-    """IDW surface for one pollutant from that hour's sensor readings."""
-    grid = np.full(index.shape, np.nan, dtype=np.float32)
-    rows = db.execute(
-        select(CAAQMSReading).where(
-            CAAQMSReading.city_slug == index.city_slug,
-            CAAQMSReading.parameter == parameter,
-            CAAQMSReading.measured_at >= hour_start,
-            CAAQMSReading.measured_at < hour_end,
-        )
-    ).scalars().all()
-    latest_by_sensor: dict[int, CAAQMSReading] = {}
-    for r in sorted(rows, key=lambda r: r.measured_at, reverse=True):
-        latest_by_sensor.setdefault(r.sensor_id, r)
-    if not latest_by_sensor:
-        return grid
-    lats = np.array([r.latitude for r in latest_by_sensor.values()])
-    lons = np.array([r.longitude for r in latest_by_sensor.values()])
-    vals = np.array([r.value for r in latest_by_sensor.values()])
-    return _idw_vectorized(index, lats, lons, vals)
 
 
 def _idw_vectorized(
@@ -153,65 +140,120 @@ def _idw_vectorized(
     return est.astype(np.float32)
 
 
-def _fire_grid(db: Session, index: GridIndex, hour_start: datetime, hour_end: datetime) -> np.ndarray:
-    """Sum FRP of fire detections falling inside grid cells for the day of
-    this timestep (FIRMS gives acq_date/time; sub-daily matching uses the
-    acquisition date only — overpasses are ~2/day)."""
-    grid = np.zeros(index.shape, dtype=np.float32)
-    day = hour_start.date().isoformat()
-    rows = db.execute(
-        select(FireDetection).where(
-            FireDetection.city_slug == index.city_slug,
-            FireDetection.acq_date == day,
+def _as_utc(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+@dataclass
+class _RangeData:
+    """Source rows for a build range, bucketed by hour/day in memory."""
+
+    # (parameter, hour) -> [(lat, lon, value)]: newest reading per sensor in the hour
+    sensors_by_hour: dict[tuple[str, datetime], list[tuple[float, float, float]]]
+    # acq_date "YYYY-MM-DD" -> [(lat, lon, frp)]
+    fires_by_day: dict[str, list[tuple[float, float, float | None]]]
+    # hour -> (temperature_c, relative_humidity, wind_speed_kmh, wind_direction_deg)
+    meteo_by_hour: dict[datetime, tuple]
+
+
+def _prefetch_range(db: Session, city_slug: str, start: datetime, end: datetime) -> _RangeData:
+    readings = db.execute(
+        select(
+            CAAQMSReading.parameter, CAAQMSReading.sensor_id,
+            CAAQMSReading.latitude, CAAQMSReading.longitude,
+            CAAQMSReading.value, CAAQMSReading.measured_at,
+        ).where(
+            CAAQMSReading.city_slug == city_slug,
+            CAAQMSReading.parameter.in_(POLLUTANT_CHANNELS),
+            CAAQMSReading.measured_at >= start,
+            CAAQMSReading.measured_at < end,
+        ).order_by(CAAQMSReading.measured_at.desc())
+    ).all()
+    latest: dict[tuple[str, datetime, int], tuple[float, float, float]] = {}
+    for param, sensor_id, lat, lon, value, ts in readings:
+        hour = _as_utc(ts).replace(minute=0, second=0, microsecond=0)
+        latest.setdefault((param, hour, sensor_id), (lat, lon, value))  # desc order → newest wins
+    sensors_by_hour: dict[tuple[str, datetime], list] = defaultdict(list)
+    for (param, hour, _sid), sample in latest.items():
+        sensors_by_hour[(param, hour)].append(sample)
+
+    fires_by_day: dict[str, list] = defaultdict(list)
+    fire_rows = db.execute(
+        select(
+            FireDetection.latitude, FireDetection.longitude,
+            FireDetection.frp, FireDetection.acq_date,
+        ).where(
+            FireDetection.city_slug == city_slug,
+            FireDetection.acq_date >= start.date().isoformat(),
+            FireDetection.acq_date <= end.date().isoformat(),
         )
-    ).scalars().all()
-    for f in rows:
-        loc = index.locate(f.latitude, f.longitude)
-        if loc is not None and f.frp is not None:
-            grid[loc] += f.frp
-    return grid
+    ).all()
+    for lat, lon, frp, day in fire_rows:
+        fires_by_day[day].append((lat, lon, frp))
 
-
-def _meteo_for_hour(db: Session, city_slug: str, hour_start: datetime) -> MeteoReading | None:
-    return db.execute(
-        select(MeteoReading)
-        .where(
+    meteo_by_hour: dict[datetime, tuple] = {}
+    meteo_rows = db.execute(
+        select(
+            MeteoReading.measured_at, MeteoReading.temperature_c,
+            MeteoReading.relative_humidity, MeteoReading.wind_speed_kmh,
+            MeteoReading.wind_direction_deg,
+        ).where(
             MeteoReading.city_slug == city_slug,
-            MeteoReading.measured_at == hour_start,
+            MeteoReading.measured_at >= start,
+            MeteoReading.measured_at < end,
         )
-        .limit(1)
-    ).scalars().first()
+    ).all()
+    for ts, temp, rh, wind, wdir in meteo_rows:
+        meteo_by_hour[_as_utc(ts)] = (temp, rh, wind, wdir)
+
+    return _RangeData(dict(sensors_by_hour), dict(fires_by_day), meteo_by_hour)
 
 
-def build_cube(db: Session, index: GridIndex, timestep: datetime) -> np.ndarray | None:
-    """Assemble one (H, W, C) cube for the hour starting at `timestep`.
-    Returns None if there is no pollutant data at all for the hour (nothing
-    worth training on)."""
-    hour_start = timestep.replace(minute=0, second=0, microsecond=0)
-    hour_end = hour_start + timedelta(hours=1)
+def _assemble_cube(index: GridIndex, data: _RangeData, hour_start: datetime) -> np.ndarray | None:
+    """Assemble one (H, W, C) cube for the hour starting at `hour_start` from
+    prefetched range data. Returns None if there is no pollutant data at all
+    for the hour (nothing worth training on)."""
     h, w = index.shape
     cube = np.full((h, w, len(CHANNELS)), np.nan, dtype=np.float32)
 
     any_pollutant = False
     for param, ch in POLLUTANT_CHANNELS.items():
-        grid = _pollutant_grid(db, index, param, hour_start, hour_end)
+        samples = data.sensors_by_hour.get((param, hour_start))
+        if not samples:
+            continue
+        lats = np.array([s[0] for s in samples])
+        lons = np.array([s[1] for s in samples])
+        vals = np.array([s[2] for s in samples])
+        grid = _idw_vectorized(index, lats, lons, vals)
         cube[:, :, ch] = grid
         if not np.all(np.isnan(grid)):
             any_pollutant = True
     if not any_pollutant:
         return None
 
-    meteo = _meteo_for_hour(db, index.city_slug, hour_start)
+    meteo = data.meteo_by_hour.get(hour_start)
     if meteo is not None:
-        cube[:, :, 3] = meteo.temperature_c if meteo.temperature_c is not None else np.nan
-        cube[:, :, 4] = meteo.relative_humidity if meteo.relative_humidity is not None else np.nan
-        cube[:, :, 5] = meteo.wind_speed_kmh if meteo.wind_speed_kmh is not None else np.nan
-        if meteo.wind_direction_deg is not None:
-            rad = np.deg2rad(meteo.wind_direction_deg)
+        temp, rh, wind, wdir = meteo
+        cube[:, :, 3] = temp if temp is not None else np.nan
+        cube[:, :, 4] = rh if rh is not None else np.nan
+        cube[:, :, 5] = wind if wind is not None else np.nan
+        if wdir is not None:
+            rad = np.deg2rad(wdir)
             cube[:, :, 6] = np.sin(rad)
             cube[:, :, 7] = np.cos(rad)
 
-    cube[:, :, 8] = _fire_grid(db, index, hour_start, hour_end)
+    # FIRMS gives acq_date/acq_time; sub-daily matching uses the acquisition
+    # date only — overpasses are ~2/day.
+    fire = np.zeros(index.shape, dtype=np.float32)
+    for lat, lon, frp in data.fires_by_day.get(hour_start.date().isoformat(), []):
+        loc = index.locate(lat, lon)
+        if loc is not None and frp is not None:
+            fire[loc] += frp
+    cube[:, :, 8] = fire
+
+    hod = 2.0 * np.pi * hour_start.hour / 24.0
+    cube[:, :, HOD_SIN_CH] = np.sin(hod)
+    cube[:, :, HOD_COS_CH] = np.cos(hod)
     return cube
 
 
@@ -219,18 +261,22 @@ def build_cubes(
     db: Session, city_slug: str, start: datetime, end: datetime
 ) -> dict:
     """Assemble + persist cubes for every hour in [start, end). Static OSM
-    channels are computed once and stamped into every cube."""
+    channels are computed once and stamped into every cube. Manifest rows are
+    upserted, so rebuilding recent hours (to pick up late-arriving station
+    data) is idempotent."""
     index = GridIndex(db, city_slug)
     roads, industrial = _static_osm_channels(db, index)
 
     out_dir = CUBE_DIR / city_slug
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    built, skipped = 0, 0
     t = start.replace(minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
     end = end.replace(tzinfo=timezone.utc)
+    data = _prefetch_range(db, city_slug, t, end)
+
+    built, skipped = 0, 0
     while t < end:
-        cube = build_cube(db, index, t)
+        cube = _assemble_cube(index, data, t)
         if cube is None:
             skipped += 1
         else:
@@ -238,19 +284,23 @@ def build_cubes(
             cube[:, :, 10] = industrial
             fname = t.strftime("%Y%m%dT%H00Z") + ".npy"
             np.save(out_dir / fname, cube)
+            # Manifest paths are stored relative to CUBE_DIR so a DB dump
+            # restores cleanly on a teammate's machine with a different
+            # checkout location; the loader resolves both forms.
+            rel_path = f"{city_slug}/{fname}"
             stmt = (
                 pg_insert(FeatureCubeManifest)
                 .values(
                     city_slug=city_slug,
                     timestep=t,
                     channels=",".join(CHANNELS),
-                    storage_path=str(out_dir / fname),
+                    storage_path=rel_path,
                     n_rows=index.n_rows,
                     n_cols=index.n_cols,
                 )
                 .on_conflict_do_update(
                     index_elements=["city_slug", "timestep"],
-                    set_={"storage_path": str(out_dir / fname), "channels": ",".join(CHANNELS)},
+                    set_={"storage_path": rel_path, "channels": ",".join(CHANNELS)},
                 )
             )
             db.execute(stmt)

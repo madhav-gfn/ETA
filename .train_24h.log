@@ -1,0 +1,15 @@
+2026-07-19 03:46:55,470 windows=2133 grid=(55, 51, 11)
+2026-07-19 03:51:54,758 epoch 0 train_mse=0.7502 val_rmse=32.44 lr=0.001
+2026-07-19 03:57:19,761 epoch 1 train_mse=0.6962 val_rmse=31.03 lr=0.001
+2026-07-19 04:03:35,444 epoch 2 train_mse=0.6673 val_rmse=30.72 lr=0.001
+2026-07-19 04:10:00,873 epoch 3 train_mse=0.6325 val_rmse=30.10 lr=0.001
+2026-07-19 04:14:56,148 epoch 4 train_mse=0.6091 val_rmse=30.69 lr=0.001
+2026-07-19 04:17:30,187 epoch 5 train_mse=0.5746 val_rmse=32.80 lr=0.001
+2026-07-19 04:20:05,699 epoch 6 train_mse=0.5586 val_rmse=31.66 lr=0.001
+2026-07-19 04:22:54,229 epoch 7 train_mse=0.5428 val_rmse=30.92 lr=0.0005
+2026-07-19 04:25:41,607 epoch 8 train_mse=0.4917 val_rmse=32.04 lr=0.0005
+2026-07-19 04:28:16,833 epoch 9 train_mse=0.4761 val_rmse=32.13 lr=0.0005
+2026-07-19 04:30:47,842 epoch 10 train_mse=0.4641 val_rmse=32.25 lr=0.0005
+2026-07-19 04:33:11,332 epoch 11 train_mse=0.4547 val_rmse=33.48 lr=0.00025
+2026-07-19 04:33:11,332 early stop at epoch 11 (no val improvement in 8)
+2026-07-19 04:33:20,260 DONE {'city_slug': 'delhi-ncr', 'horizon_hours': 24, 'windows': 2133, 'train_windows': 1493, 'val_windows': 285, 'test_windows': 285, 'epochs_ran': 12, 'model_rmse_24h': 34.091, 'persistence_rmse_24h': 31.657, 'beats_persistence': False, 'val_rmse_best': 30.096, 'trained_at': '2026-07-18T23:03:20.258381+00:00'}

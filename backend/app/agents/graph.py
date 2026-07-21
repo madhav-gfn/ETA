@@ -22,6 +22,7 @@ import math
 from datetime import datetime, timezone
 from typing import TypedDict
 
+import numpy as np
 from langgraph.graph import END, StateGraph
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -35,7 +36,7 @@ from app.agents.schemas import (
     EvidenceItem,
     PatrolStop,
 )
-from app.geospatial.idw import distance_m
+from app.geospatial.idw import distance_m, distance_m_vec
 from app.geospatial.models import GridCell, GridReading
 from app.ingestion.meteo_openmeteo import latest_meteo
 from app.ingestion.models import FireDetection, OSMLandUseFeature
@@ -113,13 +114,41 @@ def monitoring_node(state: AgentState) -> AgentState:
 
 # --- 2. Source attribution agent -------------------------------------------
 
-def _bearing_deg(lat1, lon1, lat2, lon2) -> float:
-    dlon = math.radians(lon2 - lon1)
-    y = math.sin(dlon) * math.cos(math.radians(lat2))
-    x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - math.sin(
-        math.radians(lat1)
-    ) * math.cos(math.radians(lat2)) * math.cos(dlon)
-    return (math.degrees(math.atan2(y, x)) + 360) % 360
+def _bearing_deg_vec(lat1: float, lon1: float, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+    """Initial bearing (degrees clockwise from north) from one point to many."""
+    lat1r = math.radians(lat1)
+    latsr = np.deg2rad(lats)
+    dlon = np.deg2rad(lons - lon1)
+    y = np.sin(dlon) * np.cos(latsr)
+    x = math.cos(lat1r) * np.sin(latsr) - math.sin(lat1r) * np.cos(latsr) * np.cos(dlon)
+    return (np.degrees(np.arctan2(y, x)) + 360) % 360
+
+
+def _bbox(lat: float, lon: float, radius_m: float) -> tuple[float, float, float, float]:
+    """Lat/lon bounding box enclosing a radius — a cheap SQL prefilter so the
+    precise distance check runs over dozens of rows, not the whole city."""
+    dlat = radius_m / 111_000.0
+    dlon = radius_m / (111_000.0 * max(math.cos(math.radians(lat)), 0.1))
+    return lat - dlat, lat + dlat, lon - dlon, lon + dlon
+
+
+def _count_within(
+    src_lats: np.ndarray, src_lons: np.ndarray,
+    pt_lats: np.ndarray, pt_lons: np.ndarray,
+    radius_m: float, chunk: int = 512,
+) -> np.ndarray:
+    """For each source point, count how many of the points fall within
+    radius_m. Chunked broadcasting keeps the (M, N) distance matrix bounded."""
+    counts = np.zeros(len(src_lats), dtype=np.int64)
+    if len(pt_lats) == 0:
+        return counts
+    for i in range(0, len(src_lats), chunk):
+        d = distance_m_vec(
+            src_lats[i : i + chunk, None], src_lons[i : i + chunk, None],
+            pt_lats[None, :], pt_lons[None, :],
+        )
+        counts[i : i + chunk] = (d <= radius_m).sum(axis=1)
+    return counts
 
 
 def attribution_node(state: AgentState) -> AgentState:
@@ -139,23 +168,29 @@ def attribution_node(state: AgentState) -> AgentState:
             detail={"direction_from_deg": wind_from, "speed_kmh": wind_speed},
         ))
 
-    # Upwind fires within 50km (research report system prompt).
-    fires = db.execute(
-        select(FireDetection).where(FireDetection.city_slug == city)
-    ).scalars().all()
+    # Upwind fires within 50km (research report system prompt) — bbox SQL
+    # prefilter, then vectorized distance + bearing checks.
+    lat_lo, lat_hi, lon_lo, lon_hi = _bbox(alert.centroid_lat, alert.centroid_lon, UPWIND_RADIUS_M)
+    fire_rows = db.execute(
+        select(FireDetection.latitude, FireDetection.longitude, FireDetection.frp).where(
+            FireDetection.city_slug == city,
+            FireDetection.latitude.between(lat_lo, lat_hi),
+            FireDetection.longitude.between(lon_lo, lon_hi),
+        )
+    ).all()
     upwind_frp = 0.0
     upwind_count = 0
-    for f in fires:
-        d = distance_m(alert.centroid_lat, alert.centroid_lon, f.latitude, f.longitude)
-        if d > UPWIND_RADIUS_M:
-            continue
+    if fire_rows:
+        f_lats = np.array([r[0] for r in fire_rows])
+        f_lons = np.array([r[1] for r in fire_rows])
+        f_frps = np.array([r[2] or 0.0 for r in fire_rows])
+        keep = distance_m_vec(alert.centroid_lat, alert.centroid_lon, f_lats, f_lons) <= UPWIND_RADIUS_M
         if wind_from is not None:
-            bearing_to_fire = _bearing_deg(alert.centroid_lat, alert.centroid_lon, f.latitude, f.longitude)
-            diff = abs((bearing_to_fire - wind_from + 180) % 360 - 180)
-            if diff > UPWIND_CONE_DEG:
-                continue
-        upwind_frp += f.frp or 0.0
-        upwind_count += 1
+            bearings = _bearing_deg_vec(alert.centroid_lat, alert.centroid_lon, f_lats, f_lons)
+            diff = np.abs((bearings - wind_from + 180) % 360 - 180)
+            keep &= diff <= UPWIND_CONE_DEG
+        upwind_frp = float(f_frps[keep].sum())
+        upwind_count = int(keep.sum())
     if upwind_count:
         evidence.append(EvidenceItem(
             kind="fire_upwind",
@@ -164,15 +199,23 @@ def attribution_node(state: AgentState) -> AgentState:
         ))
 
     # OSM context in ~1.5km of the cell centroid.
-    osm = db.execute(
-        select(OSMLandUseFeature).where(OSMLandUseFeature.city_slug == city)
-    ).scalars().all()
+    lat_lo, lat_hi, lon_lo, lon_hi = _bbox(alert.centroid_lat, alert.centroid_lon, 1_500)
+    osm_rows = db.execute(
+        select(
+            OSMLandUseFeature.tag_key, OSMLandUseFeature.tag_value,
+            OSMLandUseFeature.latitude, OSMLandUseFeature.longitude,
+        ).where(
+            OSMLandUseFeature.city_slug == city,
+            OSMLandUseFeature.latitude.between(lat_lo, lat_hi),
+            OSMLandUseFeature.longitude.between(lon_lo, lon_hi),
+        )
+    ).all()
     industrial = highway = 0
-    for o in osm:
-        if distance_m(alert.centroid_lat, alert.centroid_lon, o.latitude, o.longitude) <= 1_500:
-            if o.tag_key == "landuse" and o.tag_value == "industrial":
+    for tag_key, tag_value, o_lat, o_lon in osm_rows:
+        if distance_m(alert.centroid_lat, alert.centroid_lon, o_lat, o_lon) <= 1_500:
+            if tag_key == "landuse" and tag_value == "industrial":
                 industrial += 1
-            elif o.tag_key == "highway":
+            elif tag_key == "highway":
                 highway += 1
     if industrial:
         evidence.append(EvidenceItem(
@@ -251,25 +294,25 @@ def enforcement_node(state: AgentState) -> AgentState:
         )
     ).all()
 
-    # Residential density per cell from OSM (counts within ~1km of centroid
-    # are approximated by direct cell hit counts for speed).
-    osm = db.execute(
-        select(OSMLandUseFeature).where(
+    # Residential density per cell from OSM — one vectorized pass over
+    # (cells × residential features) instead of a Python distance loop per
+    # cell, which was tens of millions of scalar ops per run.
+    res_rows = db.execute(
+        select(OSMLandUseFeature.latitude, OSMLandUseFeature.longitude).where(
             OSMLandUseFeature.city_slug == city,
             OSMLandUseFeature.tag_key == "landuse",
             OSMLandUseFeature.tag_value == "residential",
         )
-    ).scalars().all()
-
-    def residential_near(cell: GridCell) -> int:
-        return sum(
-            1 for o in osm
-            if distance_m(cell.centroid_lat, cell.centroid_lon, o.latitude, o.longitude) <= 1_500
-        )
+    ).all()
+    res_lats = np.array([r[0] for r in res_rows])
+    res_lons = np.array([r[1] for r in res_rows])
+    cell_lats = np.array([cell.centroid_lat for _, cell in rows])
+    cell_lons = np.array([cell.centroid_lon for _, cell in rows])
+    res_counts = _count_within(cell_lats, cell_lons, res_lats, res_lons, 1_500)
 
     scored = []
-    for reading, cell in rows:
-        res = residential_near(cell)
+    for (reading, cell), res in zip(rows, res_counts):
+        res = int(res)
         score = reading.value * (1 + res)  # AQI magnitude × residential density
         scored.append((score, reading, cell, res))
     scored.sort(key=lambda s: s[0], reverse=True)
