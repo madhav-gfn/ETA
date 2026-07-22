@@ -182,9 +182,9 @@ def pull_caaqms_readings(
                                     reading=reading, **meta)
                     total_written += 1
 
+            db.commit()
             time.sleep(0.5)  # stay under rate limit between location requests
 
-    db.commit()
     logger.info("CAAQMS ingestion for %s wrote %d rows", city_slug, total_written)
     return total_written
 
