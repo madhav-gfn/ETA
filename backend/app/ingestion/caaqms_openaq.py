@@ -173,56 +173,40 @@ def pull_caaqms_readings(
                         )
                     time.sleep(0.3)
 
+            bulk_rows = []
             for sid, readings in by_sensor.items():
                 readings.sort(key=lambda r: r.measured_at)
                 filled = gap_fill_under_3h(readings)
                 meta = sensor_meta[sid]
                 for reading in filled:
-                    _upsert_reading(db, city_slug=city.slug, sensor_id=sid,
-                                    reading=reading, **meta)
-                    total_written += 1
+                    bulk_rows.append({
+                        "city_slug": city.slug,
+                        "location_id": meta["location_id"],
+                        "sensor_id": sid,
+                        "station_name": meta["station_name"],
+                        "latitude": meta["latitude"],
+                        "longitude": meta["longitude"],
+                        "parameter": meta["parameter"],
+                        "value": reading.value,
+                        "unit": meta["unit"],
+                        "measured_at": reading.measured_at,
+                        "is_interpolated": reading.is_interpolated,
+                    })
+
+            if bulk_rows:
+                stmt = pg_insert(CAAQMSReading)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[CAAQMSReading.sensor_id, CAAQMSReading.measured_at],
+                    set_={"value": stmt.excluded.value, "is_interpolated": stmt.excluded.is_interpolated},
+                )
+                db.execute(stmt, bulk_rows)
+                total_written += len(bulk_rows)
 
             db.commit()
             time.sleep(0.5)  # stay under rate limit between location requests
 
     logger.info("CAAQMS ingestion for %s wrote %d rows", city_slug, total_written)
     return total_written
-
-
-def _upsert_reading(
-    db: Session,
-    *,
-    city_slug: str,
-    location_id: int,
-    sensor_id: int,
-    station_name: str,
-    latitude: float,
-    longitude: float,
-    parameter: str,
-    unit: str,
-    reading: Reading,
-) -> None:
-    stmt = (
-        pg_insert(CAAQMSReading)
-        .values(
-            city_slug=city_slug,
-            location_id=location_id,
-            sensor_id=sensor_id,
-            station_name=station_name,
-            latitude=latitude,
-            longitude=longitude,
-            parameter=parameter,
-            value=reading.value,
-            unit=unit,
-            measured_at=reading.measured_at,
-            is_interpolated=reading.is_interpolated,
-        )
-        .on_conflict_do_update(
-            index_elements=[CAAQMSReading.sensor_id, CAAQMSReading.measured_at],
-            set_={"value": reading.value, "is_interpolated": reading.is_interpolated},
-        )
-    )
-    db.execute(stmt)
 
 
 def latest_readings(db: Session, city_slug: str = "delhi-ncr", limit: int = 100):
